@@ -18,13 +18,6 @@
   "system": ["wrath-and-glory"],
   "esmodules": ["scripts/wng-zipper.js"],
   "styles": [],
-  "languages": [
-    {
-      "lang": "en",
-      "name": "English",
-      "path": "lang/en.json"
-    }
-  ],
   "packs": [],
   "socket": false,
   "manifest": "https://raw.githubusercontent.com/acemb-rso/wng-zipper/main/module.json",
