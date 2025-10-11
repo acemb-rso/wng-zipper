@@ -464,6 +464,7 @@ async function computeNextZipperCombatant(combat, opts = {}) {
       await combat.setFlag(MODULE_ID, "currentSide", "pc");
       return chosen;
     }
+    return plan.choice?.doc ?? null;
   }
 
   // Otherwise pick first available
