@@ -190,12 +190,14 @@ Hooks.once("ready", async () => {
     if (!nextCombatant) return original(...args);
 
     if (typeof this.setTurn === "function") {
-      return await this.setTurn(nextCombatant.id);
+      await this.setTurn(nextCombatant.id);
+      return this;
     }
 
     const idx = this.turns.findIndex(t => t.id === nextCombatant.id);
     if (idx < 0) return original(...args);
-    return this.update({ turn: idx });
+    await this.update({ turn: idx });
+    return this;
   });
 
   wrap(C, "nextRound", async function (original, ...args) {
