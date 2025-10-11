@@ -1,0 +1,91 @@
+import { DamageModel } from "./components/damage";
+import { StandardItemModel } from "./components/standard";
+import { TestDataModel } from "./components/test";
+import { TraitsModel } from "./components/traits";
+
+let fields = foundry.data.fields;
+
+export class PsychicPowerModel extends StandardItemModel
+{
+    static LOCALIZATION_PREFIXES = ["WH.Models.psychicPower"];
+
+    static defineSchema() 
+    {
+        let schema = super.defineSchema();
+        schema.test = new fields.EmbeddedDataField(TestDataModel)
+        schema.damage = new fields.EmbeddedDataField(DamageModel)
+        schema.effect = new fields.StringField({}),
+        schema.cost = new fields.NumberField({min : 0}),
+        schema.dn = new fields.StringField({}),
+        schema.activation = new fields.StringField({initial : "action"}),
+        schema.duration = new fields.StringField({}),
+        schema.range = new fields.StringField({}),
+        schema.multiTarget =  new fields.BooleanField({}),
+        schema.keywords = new fields.StringField({}),
+        schema.traits = new fields.EmbeddedDataField(TraitsModel);
+        schema.prerequisites = new fields.StringField({}),
+        schema.potency = ListModel.createListModel(new fields.SchemaField({
+            cost : new fields.NumberField(),
+            description : new fields.StringField(),
+            initial : new fields.StringField(),
+            property : new fields.StringField(),
+            single : new fields.BooleanField(),
+            value : new fields.StringField()
+        }))
+        return schema;
+    }
+
+
+    get traitsAvailable() {
+        return game.wng.config.weaponTraits
+    }
+    
+    get Activation() {
+        return game.wng.config.powerActivations[this.activation]
+    }
+    
+    get MultiTarget() {
+        return this.multiTarget ? game.i18n.localize("Yes") : game.i18n.localize("No")
+    }
+
+    static migrateData(data)
+    {
+        super.migrateData(data);
+        if (data.potency instanceof Array)
+        {
+            data.potency = {list : data.potency};
+        }
+    }
+
+    async toEmbed(config, options)
+    {
+        let html = `
+        <h4>@UUID[${this.parent.uuid}]{${this.parent.name}}</h4>
+        <p><strong>XP Cost</strong>: ${this.cost}</p>
+        <p><strong>DN</strong>: ${this.dn}</p>
+        <p><strong>Activation</strong>: ${this.Activation}</p>
+        <p><strong>Duration</strong>: ${this.duration}</p>
+        <p><strong>Range</strong>: ${this.range}</p>
+        <p><strong>Multi-target</strong>: ${this.multiTarget ? "Yes" : "No"}</p>
+        <p><strong>Keywords</strong>: ${this.keywords.split(",").map(i => `<a class="keyword">${i.trim()}</a>`).join(", ")}</p>
+        <p><strong>Prerequisite</strong>: ${this.prerequisites}</p>
+        ${this.description.replace("<p>", "<p><strong>Effect</strong>: ")}</p>
+        `;
+
+        if (this.potency.list.length)
+        {
+            html += `
+            <p><strong>Potency:</strong></p>
+            <ul>
+            ${this.potency.list.map(p => `<li>[${p.cost}] ${p.description}</li>`).join("")}
+            </ul>
+            `
+        }
+    
+        let div = document.createElement("div");
+        div.style = config.style;
+        div.innerHTML = await foundry.applications.ux.TextEditor.implementation.enrichHTML(`<div style="${config.style || ""}">${html}</div>`, {relativeTo : this, async: true, secrets : options.secrets})
+        return div;
+    }
+
+}
