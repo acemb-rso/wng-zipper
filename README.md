@@ -30,4 +30,38 @@ The GM always retains override authority, and the module falls back gracefully t
 ### Installation
 1. In Foundry VTT, open **Add-on Modules → Install Module**.  
 2. Paste this manifest URL:
+3. Enable *Wrath & Glory — Zipper Initiative* in your world’s module settings.
+
+---
+
+### 🔧 Usage
+1. In the Combat Tracker, click **Zipper: ON/OFF** to toggle.  
+2. Use the **Priority** button to set who starts the round (PCs or NPCs).  
+3. During PC turns, if multiple characters can act, a small dialog lets the group choose who goes next.  
+4. When all combatants have acted, the round resets to the chosen Priority side.
+
+---
+
+### ⚙️ Settings
+| Setting | Scope | Default | Description |
+|----------|--------|----------|-------------|
+| **enabledByDefault** | world | true | Start new combats with Zipper enabled |
+| **playersCanAdvance** | world | true | Allow players to select the next PC |
+
+---
+
+### 🧪 Compatibility & Limitations
+- Tested with Foundry v12.  
+- Works with the official *Wrath & Glory* system.  
+- Does not modify dice mechanics (e.g., Seize the Initiative, Glory, or Ruin).  
+- Hidden or defeated tokens are skipped automatically.
+
+---
+
+### 🪙 Credits & License
+Created by **Ariel Cember** with design assistance from GPT-5.  
+Inspired by [Caewok’s Zipper Initiative](https://github.com/caewok/fvtt-zipper-initiative)  
+and [Death-Save’s Combat Carousel](https://github.com/death-save/combat-carousel).  
+
+Licensed under the **MIT License** (see LICENSE).  
 
