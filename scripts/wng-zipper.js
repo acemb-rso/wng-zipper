@@ -190,14 +190,12 @@ Hooks.once("ready", async () => {
     if (!nextCombatant) return original(...args);
 
     if (typeof this.setTurn === "function") {
-      await this.setTurn(nextCombatant.id);
-      return this;
+      return this.setTurn(nextCombatant.id);
     }
 
     const idx = this.turns.findIndex(t => t.id === nextCombatant.id);
     if (idx < 0) return original(...args);
-    await this.update({ turn: idx });
-    return this;
+    return this.update({ turn: idx });
   });
 
   wrap(C, "nextRound", async function (original, ...args) {
@@ -229,11 +227,8 @@ async function computeNextZipperCombatant(combat, opts = {}) {
   if (!turns.length) return null;
 
   const acted = new Set(await combat.getFlag(MODULE_ID, "actedIds") ?? []);
-  if (opts.forceStartOfRound) {
-    acted.clear();
-    await combat.setFlag(MODULE_ID, "actedIds", []);
-  }
-
+  if (opts.forceStartOfRound) acted.clear();
+  let currentSide = await combat.getFlag(MODULE_ID, "currentSide");
   const startingSide = await combat.getFlag(MODULE_ID, "startingSide") ?? "pc";
   const previousSide = opts.forceStartOfRound ? null : await combat.getFlag(MODULE_ID, "currentSide");
   let nextSide = previousSide || startingSide;
@@ -253,7 +248,7 @@ async function computeNextZipperCombatant(combat, opts = {}) {
     await combat.setFlag(MODULE_ID, "currentSide", startingSide);
     const fresh = aliveAvailOfSide(startingSide);
     if (!fresh.length) return null;
-    await ChatMessage.create({
+    ChatMessage.create({
       content: `<strong>Zipper:</strong> All combatants acted. New round begins with <em>${startingSide.toUpperCase()}</em>.`,
       whisper: ChatMessage.getWhisperRecipients("GM")
     });
@@ -268,15 +263,16 @@ async function computeNextZipperCombatant(combat, opts = {}) {
 
   let chosen;
   if (nextSide === "pc" && candidates.length > 1) {
-    chosen = await selectPCDialog(candidates);
-  }
-  if (!chosen) {
-    chosen = candidates[0];
+    const chosen = await selectPCDialog(candidates);
+    if (chosen) {
+      await combat.setFlag(MODULE_ID, "currentSide", "pc");
+      return chosen;
+    }
   }
 
-  const opposingHasOptions = nextSide === "pc" ? npcAvail.length > 0 : pcAvail.length > 0;
-  const upcomingSide = opposingHasOptions ? (nextSide === "pc" ? "npc" : "pc") : nextSide;
-  await combat.setFlag(MODULE_ID, "currentSide", upcomingSide);
+  // Otherwise pick first available
+  const chosen = candidates[0];
+  await combat.setFlag(MODULE_ID, "currentSide", isPC(chosen) ? "pc" : "npc");
 
   await ChatMessage.create({
     content: `<em>Alternate Activation:</em> <strong>${nextSide.toUpperCase()}</strong> act.`,
