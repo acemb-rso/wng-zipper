@@ -457,22 +457,21 @@ async function computeNextZipperCombatant(combat, opts = {}) {
   let candidates = nextSide === "pc" ? pcAvail : npcAvail;
   if (!candidates.length) return null;
 
-  let chosen;
+  let chosen = candidates[0];
   if (nextSide === "pc" && candidates.length > 1) {
-    const chosen = await selectPCDialog(candidates);
-    if (chosen) {
-      await combat.setFlag(MODULE_ID, "currentSide", "pc");
-      return chosen;
+    const selection = await selectPCDialog(candidates);
+    if (selection) {
+      chosen = selection;
     }
-    return plan.choice?.doc ?? null;
   }
 
-  // Otherwise pick first available
-  const chosen = candidates[0];
-  await combat.setFlag(MODULE_ID, "currentSide", isPC(chosen) ? "pc" : "npc");
+  if (!chosen) return null;
+
+  const chosenSide = isPC(chosen) ? "pc" : "npc";
+  await combat.setFlag(MODULE_ID, "currentSide", chosenSide);
 
   await ChatMessage.create({
-    content: `<em>Alternate Activation:</em> <strong>${nextSide.toUpperCase()}</strong> act.`,
+    content: `<em>Alternate Activation:</em> <strong>${chosenSide.toUpperCase()}</strong> act.`,
     speaker: { alias: "Zipper" }
   });
 

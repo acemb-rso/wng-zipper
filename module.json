@@ -1,40 +1,38 @@
 {
   "id": "wng-zipper-initiative",
+  "type": "module",
   "title": "Wrath & Glory — Zipper Initiative",
   "description": "Implements strict alternate-activation (\"zipper\") initiative for Wrath & Glory. Sides alternate (PCs ↔ NPCs) each activation, respecting a Priority side each round. Players may select which PC acts next; the GM always retains control.",
   "version": "0.2.0",
   "authors": [
     {
       "name": "Ariel Cember",
-      "email": "",
       "url": "https://github.com/acemb-rso"
     }
   ],
+  "url": "https://github.com/acemb-rso/wng-zipper",
+  "bugs": "https://github.com/acemb-rso/wng-zipper/issues",
+  "readme": "https://github.com/acemb-rso/wng-zipper/blob/main/README.md",
+  "changelog": "https://github.com/acemb-rso/wng-zipper/blob/main/CHANGELOG.md",
+  "license": "MIT",
+  "versionAvailability": "stable",
+  "esmodules": [
+    "scripts/wng-zipper.js"
+  ],
+  "scripts": [],
+  "styles": [],
+  "packs": [],
+  "languages": [],
+  "media": [],
+  "socket": false,
+  "allowBugReporter": true,
+  "manifest": "https://raw.githubusercontent.com/acemb-rso/wng-zipper/main/module.json",
+  "download": "https://github.com/acemb-rso/wng-zipper/archive/refs/heads/main.zip",
   "compatibility": {
     "minimum": "11",
     "verified": "12",
     "maximum": "13"
   },
-  "system": ["wrath-and-glory"],
-  "esmodules": ["scripts/wng-zipper.js"],
-  "styles": [],
-  "languages": [
-    {
-      "lang": "en",
-      "name": "English",
-      "path": "lang/en.json"
-    }
-  ],
-  "packs": [],
-  "socket": false,
-  "manifest": "https://raw.githubusercontent.com/acemb-rso/wng-zipper/main/module.json",
-  "download": "https://github.com/acemb-rso/wng-zipper/archive/refs/heads/main.zip",
-  "url": "https://github.com/acemb-rso/wng-zipper",
-  "bugs": "https://github.com/acemb-rso/wng-zipper/issues",
-  "license": "MIT",
-  "readme": "https://github.com/acemb-rso/wng-zipper/blob/main/README.md",
-  "changelog": "https://github.com/acemb-rso/wng-zipper/blob/main/CHANGELOG.md",
-  "allowBugReporter": true,
   "relationships": {
     "systems": [
       {
@@ -45,8 +43,8 @@
           "verified": "6"
         }
       }
-    ]
+    ],
+    "requires": []
   },
-  "flags": {},
-  "manifestPlusVersion": "1.2.0"
+  "flags": {}
 }
