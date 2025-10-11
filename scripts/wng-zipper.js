@@ -137,7 +137,7 @@ Hooks.on("updateCombat", async (combat, change) => {
     if (typeof change.round === "number") {
       await combat.setFlag(MODULE_ID, "actedIds", []);
       await combat.setFlag(MODULE_ID, "currentSide", await combat.getFlag(MODULE_ID, "startingSide"));
-      ChatMessage.create({
+      await ChatMessage.create({
         content: `<strong>Zipper:</strong> New round started. Priority resets to <em>${(await combat.getFlag(MODULE_ID, "startingSide"))?.toUpperCase()}</em>.`,
         whisper: ChatMessage.getWhisperRecipients("GM")
       });
@@ -169,8 +169,12 @@ Hooks.once("ready", async () => {
   const wrap = (klass, method, impl) => {
     const original = klass.prototype[method];
     klass.prototype[method] = async function (...args) {
-      try { return await impl.call(this, original.bind(this), ...args); }
-      catch (e) { log(e); return await original(...args); }
+      try {
+        return await impl.call(this, original.bind(this), ...args);
+      } catch (e) {
+        log(e);
+        return await original.apply(this, args);
+      }
     };
   };
 
@@ -178,34 +182,56 @@ Hooks.once("ready", async () => {
 
   wrap(C, "nextTurn", async function (original, ...args) {
     if (!(await this.getFlag(MODULE_ID, "enabled"))) return original(...args);
-    const nextIdx = await computeNextZipperIndex(this);
-    if (nextIdx === null) return original(...args);
-    return this.update({ turn: nextIdx });
+    const nextCombatant = await computeNextZipperCombatant(this);
+    if (!nextCombatant) return original(...args);
+
+    if (typeof this.setTurn === "function") {
+      return await this.setTurn(nextCombatant.id);
+    }
+
+    const idx = this.turns.findIndex(t => t.id === nextCombatant.id);
+    if (idx < 0) return original(...args);
+    return this.update({ turn: idx });
   });
 
   wrap(C, "nextRound", async function (original, ...args) {
     if (!(await this.getFlag(MODULE_ID, "enabled"))) return original(...args);
-    const nextIdx = await computeNextZipperIndex(this, { forceStartOfRound: true });
-    if (nextIdx === null) return original(...args);
-    return this.update({ round: this.round + 1, turn: nextIdx });
+
+    const outcome = await original(...args);
+    const nextCombatant = await computeNextZipperCombatant(this, { forceStartOfRound: true });
+    if (!nextCombatant) return outcome;
+
+    if (typeof this.setTurn === "function") {
+      await this.setTurn(nextCombatant.id);
+      return this;
+    }
+
+    const idx = this.turns.findIndex(t => t.id === nextCombatant.id);
+    if (idx < 0) return outcome;
+    await this.update({ turn: idx });
+    return this;
   });
 });
 
 /* ---------------------------------------------------------
  * Strict alternation (PC↔NPC)
  * --------------------------------------------------------- */
-async function computeNextZipperIndex(combat, opts = {}) {
+async function computeNextZipperCombatant(combat, opts = {}) {
   const enabled = await combat.getFlag(MODULE_ID, "enabled");
   if (!enabled) return null;
   const turns = combat.turns || [];
-  if (!turns.length) return 0;
+  if (!turns.length) return null;
 
   const acted = new Set(await combat.getFlag(MODULE_ID, "actedIds") ?? []);
-  let currentSide = await combat.getFlag(MODULE_ID, "currentSide");
-  const startingSide = await combat.getFlag(MODULE_ID, "startingSide") ?? "pc";
-  if (!currentSide || opts.forceStartOfRound) currentSide = startingSide;
+  if (opts.forceStartOfRound) {
+    acted.clear();
+    await combat.setFlag(MODULE_ID, "actedIds", []);
+  }
 
-  // Filter candidates
+  const startingSide = await combat.getFlag(MODULE_ID, "startingSide") ?? "pc";
+  const previousSide = opts.forceStartOfRound ? null : await combat.getFlag(MODULE_ID, "currentSide");
+  let nextSide = previousSide || startingSide;
+
   const aliveAvailOfSide = (side) => turns.filter((c) => {
     const defeated = c.isDefeated ?? c.defeated ?? false;
     if (defeated) return false;
@@ -216,54 +242,42 @@ async function computeNextZipperIndex(combat, opts = {}) {
   const pcAvail = aliveAvailOfSide("pc");
   const npcAvail = aliveAvailOfSide("npc");
 
-  let nextSide;
-  let candidates;
-
-  if (pcAvail.length && npcAvail.length) {
-    // Both sides have eligibles → strictly alternate
-    nextSide = (currentSide === "pc") ? "npc" : "pc";
-    candidates = nextSide === "pc" ? pcAvail : npcAvail;
-  } else if (pcAvail.length || npcAvail.length) {
-    // One side exhausted → remaining side finishes the round
-    nextSide = pcAvail.length ? "pc" : "npc";
-    candidates = pcAvail.length ? pcAvail : npcAvail;
-  } else {
-    // Round over → reset to starting side
+  if (!pcAvail.length && !npcAvail.length) {
     await combat.setFlag(MODULE_ID, "actedIds", []);
     await combat.setFlag(MODULE_ID, "currentSide", startingSide);
     const fresh = aliveAvailOfSide(startingSide);
-    if (!fresh.length) return 0;
-    const idx0 = turns.findIndex(t => t.id === fresh[0].id);
-    ChatMessage.create({
+    if (!fresh.length) return null;
+    await ChatMessage.create({
       content: `<strong>Zipper:</strong> All combatants acted. New round begins with <em>${startingSide.toUpperCase()}</em>.`,
       whisper: ChatMessage.getWhisperRecipients("GM")
     });
-    return idx0;
+    return fresh[0];
   }
 
-  // Player choice when multiple PCs
+  if (nextSide === "pc" && !pcAvail.length) nextSide = "npc";
+  if (nextSide === "npc" && !npcAvail.length) nextSide = "pc";
+
+  let candidates = nextSide === "pc" ? pcAvail : npcAvail;
+  if (!candidates.length) return null;
+
+  let chosen;
   if (nextSide === "pc" && candidates.length > 1) {
-    const chosen = await selectPCDialog(candidates);
-    if (chosen) {
-      await combat.setFlag(MODULE_ID, "currentSide", "pc");
-      const idx = turns.findIndex(t => t.id === chosen.id);
-      return idx;
-    }
+    chosen = await selectPCDialog(candidates);
+  }
+  if (!chosen) {
+    chosen = candidates[0];
   }
 
-  // Otherwise pick first available
-  const chosen = candidates[0];
-  const nextIndex = turns.findIndex(t => t.id === chosen.id);
-  await combat.setFlag(MODULE_ID, "currentSide", isPC(chosen) ? "pc" : "npc");
+  const opposingHasOptions = nextSide === "pc" ? npcAvail.length > 0 : pcAvail.length > 0;
+  const upcomingSide = opposingHasOptions ? (nextSide === "pc" ? "npc" : "pc") : nextSide;
+  await combat.setFlag(MODULE_ID, "currentSide", upcomingSide);
 
-  // Announce flip
-  const newSide = await combat.getFlag(MODULE_ID, "currentSide");
-  ChatMessage.create({
-    content: `<em>Alternate Activation:</em> <strong>${newSide.toUpperCase()}</strong> act.`,
+  await ChatMessage.create({
+    content: `<em>Alternate Activation:</em> <strong>${nextSide.toUpperCase()}</strong> act.`,
     speaker: { alias: "Zipper" }
   });
 
-  return nextIndex;
+  return chosen;
 }
 
 /* ---------------------------------------------------------
@@ -276,9 +290,9 @@ async function selectPCDialog(candidates) {
     return null;
   }
 
-  const choices = candidates.map(c => `
+  const choices = candidates.map((c, idx) => `
     <label style="display:flex;align-items:center;gap:6px;margin:4px 0;">
-      <input type="radio" name="pcChoice" value="${c.id}">
+      <input type="radio" name="pcChoice" value="${c.id}" ${idx === 0 ? "checked" : ""}>
       <img src="${c.token?.texture?.src || c.img}" width="28" height="28" style="object-fit:cover;border-radius:4px;">
       ${c.name}
     </label>`).join("");
@@ -309,6 +323,7 @@ async function selectPCDialog(candidates) {
 Hooks.on("renderCombatTracker", (app, html) => {
   if (!game.combat) return;
   const enabled = game.combat.getFlag(MODULE_ID, "enabled");
+  html.find(".directory-header .zipper-hint").remove();
   const hint = $(`<div class="zipper-hint" style="margin:4px 8px;font-size:11px;opacity:.85;">
     Zipper ${enabled ? "<strong>ENABLED</strong>" : "disabled"}. Use header buttons to toggle or set Priority.
   </div>`);
