@@ -178,29 +178,48 @@ Hooks.once("ready", async () => {
 
   wrap(C, "nextTurn", async function (original, ...args) {
     if (!(await this.getFlag(MODULE_ID, "enabled"))) return original(...args);
-    const nextIdx = await computeNextZipperIndex(this);
-    if (nextIdx === null) return original(...args);
-    return this.update({ turn: nextIdx });
+    const nextCombatant = await computeNextZipperCombatant(this);
+    if (!nextCombatant) return original(...args);
+
+    if (typeof this.setTurn === "function") {
+      return this.setTurn(nextCombatant.id);
+    }
+
+    const idx = this.turns.findIndex(t => t.id === nextCombatant.id);
+    if (idx < 0) return original(...args);
+    return this.update({ turn: idx });
   });
 
   wrap(C, "nextRound", async function (original, ...args) {
     if (!(await this.getFlag(MODULE_ID, "enabled"))) return original(...args);
-    const nextIdx = await computeNextZipperIndex(this, { forceStartOfRound: true });
-    if (nextIdx === null) return original(...args);
-    return this.update({ round: this.round + 1, turn: nextIdx });
+
+    const outcome = await original(...args);
+    const nextCombatant = await computeNextZipperCombatant(this, { forceStartOfRound: true });
+    if (!nextCombatant) return outcome;
+
+    if (typeof this.setTurn === "function") {
+      await this.setTurn(nextCombatant.id);
+      return this;
+    }
+
+    const idx = this.turns.findIndex(t => t.id === nextCombatant.id);
+    if (idx < 0) return outcome;
+    await this.update({ turn: idx });
+    return this;
   });
 });
 
 /* ---------------------------------------------------------
  * Strict alternation (PC↔NPC)
  * --------------------------------------------------------- */
-async function computeNextZipperIndex(combat, opts = {}) {
+async function computeNextZipperCombatant(combat, opts = {}) {
   const enabled = await combat.getFlag(MODULE_ID, "enabled");
   if (!enabled) return null;
   const turns = combat.turns || [];
-  if (!turns.length) return 0;
+  if (!turns.length) return null;
 
   const acted = new Set(await combat.getFlag(MODULE_ID, "actedIds") ?? []);
+  if (opts.forceStartOfRound) acted.clear();
   let currentSide = await combat.getFlag(MODULE_ID, "currentSide");
   const startingSide = await combat.getFlag(MODULE_ID, "startingSide") ?? "pc";
   if (!currentSide || opts.forceStartOfRound) currentSide = startingSide;
@@ -232,13 +251,12 @@ async function computeNextZipperIndex(combat, opts = {}) {
     await combat.setFlag(MODULE_ID, "actedIds", []);
     await combat.setFlag(MODULE_ID, "currentSide", startingSide);
     const fresh = aliveAvailOfSide(startingSide);
-    if (!fresh.length) return 0;
-    const idx0 = turns.findIndex(t => t.id === fresh[0].id);
+    if (!fresh.length) return null;
     ChatMessage.create({
       content: `<strong>Zipper:</strong> All combatants acted. New round begins with <em>${startingSide.toUpperCase()}</em>.`,
       whisper: ChatMessage.getWhisperRecipients("GM")
     });
-    return idx0;
+    return fresh[0];
   }
 
   // Player choice when multiple PCs
@@ -246,14 +264,12 @@ async function computeNextZipperIndex(combat, opts = {}) {
     const chosen = await selectPCDialog(candidates);
     if (chosen) {
       await combat.setFlag(MODULE_ID, "currentSide", "pc");
-      const idx = turns.findIndex(t => t.id === chosen.id);
-      return idx;
+      return chosen;
     }
   }
 
   // Otherwise pick first available
   const chosen = candidates[0];
-  const nextIndex = turns.findIndex(t => t.id === chosen.id);
   await combat.setFlag(MODULE_ID, "currentSide", isPC(chosen) ? "pc" : "npc");
 
   // Announce flip
@@ -263,7 +279,7 @@ async function computeNextZipperIndex(combat, opts = {}) {
     speaker: { alias: "Zipper" }
   });
 
-  return nextIndex;
+  return chosen;
 }
 
 /* ---------------------------------------------------------
