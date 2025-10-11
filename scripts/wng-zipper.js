@@ -386,14 +386,12 @@ Hooks.once("ready", async () => {
     if (!nextCombatant) return original(...args);
 
     if (typeof this.setTurn === "function") {
-      await this.setTurn(nextCombatant.id);
-      return this;
+      return this.setTurn(nextCombatant.id);
     }
 
     const idx = this.turns.findIndex(t => t.id === nextCombatant.id);
     if (idx < 0) return original(...args);
-    await this.update({ turn: idx });
-    return this;
+    return this.update({ turn: idx });
   });
 
   wrap(C, "nextRound", async function (original, ...args) {
@@ -419,43 +417,63 @@ Hooks.once("ready", async () => {
  * Strict alternation (PC↔NPC)
  * --------------------------------------------------------- */
 async function computeNextZipperCombatant(combat, opts = {}) {
-  const plan = await evaluateZipperState(combat, opts);
-  if (!plan.enabled) return null;
-  if (!plan.entries.length) return null;
+  const enabled = await combat.getFlag(MODULE_ID, "enabled");
+  if (!enabled) return null;
+  const turns = combat.turns || [];
+  if (!turns.length) return null;
 
-  if (plan.roundReset) {
-    if (plan.clearActed) await combat.setFlag(MODULE_ID, "actedIds", []);
-    await combat.setFlag(MODULE_ID, "currentSide", plan.state.upcomingSide ?? plan.state.startingSide);
-    if (plan.rawManualChoiceId) await combat.unsetFlag(MODULE_ID, MANUAL_CHOICE_FLAG);
-    if (plan.roundResetMessage) {
-      await ChatMessage.create({
-        content: plan.roundResetMessage,
-        whisper: ChatMessage.getWhisperRecipients("GM")
-      });
-    }
-    return plan.choice?.doc ?? null;
-  }
+  const acted = new Set(await combat.getFlag(MODULE_ID, "actedIds") ?? []);
+  if (opts.forceStartOfRound) acted.clear();
+  let currentSide = await combat.getFlag(MODULE_ID, "currentSide");
+  const startingSide = await combat.getFlag(MODULE_ID, "startingSide") ?? "pc";
+  const previousSide = opts.forceStartOfRound ? null : await combat.getFlag(MODULE_ID, "currentSide");
+  let nextSide = previousSide || startingSide;
 
-  let chosen = plan.choice?.doc ?? null;
-  if (!chosen) {
-    if (plan.needsChoice) {
-      const selection = await selectPCDialog(plan.options.map(o => o.doc));
-      if (!selection) return null;
-      chosen = selection;
-    } else {
-      return null;
-    }
-  }
+  const aliveAvailOfSide = (side) => turns.filter((c) => {
+    const defeated = c.isDefeated ?? c.defeated ?? false;
+    if (defeated) return false;
+    if (c.hidden && !game.user.isGM) return false;
+    return (side === "pc") === isPC(c) && !acted.has(c.id);
+  });
 
-  if (plan.clearActed) await combat.setFlag(MODULE_ID, "actedIds", []);
-  await combat.setFlag(MODULE_ID, "currentSide", plan.state.upcomingSide ?? plan.state.nextSide ?? plan.state.startingSide);
-  if (plan.manualUsed || plan.rawManualChoiceId) await combat.unsetFlag(MODULE_ID, MANUAL_CHOICE_FLAG);
-  if (plan.announceMessage) {
-    await ChatMessage.create({
-      content: plan.announceMessage,
-      speaker: { alias: "Zipper" }
+  const pcAvail = aliveAvailOfSide("pc");
+  const npcAvail = aliveAvailOfSide("npc");
+
+  if (!pcAvail.length && !npcAvail.length) {
+    await combat.setFlag(MODULE_ID, "actedIds", []);
+    await combat.setFlag(MODULE_ID, "currentSide", startingSide);
+    const fresh = aliveAvailOfSide(startingSide);
+    if (!fresh.length) return null;
+    ChatMessage.create({
+      content: `<strong>Zipper:</strong> All combatants acted. New round begins with <em>${startingSide.toUpperCase()}</em>.`,
+      whisper: ChatMessage.getWhisperRecipients("GM")
     });
+    return fresh[0];
   }
+
+  if (nextSide === "pc" && !pcAvail.length) nextSide = "npc";
+  if (nextSide === "npc" && !npcAvail.length) nextSide = "pc";
+
+  let candidates = nextSide === "pc" ? pcAvail : npcAvail;
+  if (!candidates.length) return null;
+
+  let chosen;
+  if (nextSide === "pc" && candidates.length > 1) {
+    const chosen = await selectPCDialog(candidates);
+    if (chosen) {
+      await combat.setFlag(MODULE_ID, "currentSide", "pc");
+      return chosen;
+    }
+  }
+
+  // Otherwise pick first available
+  const chosen = candidates[0];
+  await combat.setFlag(MODULE_ID, "currentSide", isPC(chosen) ? "pc" : "npc");
+
+  await ChatMessage.create({
+    content: `<em>Alternate Activation:</em> <strong>${nextSide.toUpperCase()}</strong> act.`,
+    speaker: { alias: "Zipper" }
+  });
 
   return chosen;
 }
@@ -500,84 +518,14 @@ async function selectPCDialog(candidates) {
 /* ---------------------------------------------------------
  * UI quality-of-life
  * --------------------------------------------------------- */
-const sideLabel = (side) => side === "npc" ? "NPCs" : "PCs";
-
-Hooks.on("renderCombatTracker", async (app, html) => {
+Hooks.on("renderCombatTracker", (app, html) => {
+  if (!game.combat) return;
+  const enabled = game.combat.getFlag(MODULE_ID, "enabled");
   html.find(".directory-header .zipper-hint").remove();
-  html.find(".directory-header").next(".wng-zipper-tracker").remove();
-
-  const combat = game.combat;
-  if (!combat) return;
-
-  const plan = await evaluateZipperState(combat, { preview: true });
-  const canSelectPC = plan.display.nextSide === "pc" && (plan.allowPlayers || game.user.isGM);
-  const canSelectNPC = plan.display.nextSide === "npc" && game.user.isGM;
-  const context = {
-    enabled: plan.enabled,
-    hasCombat: !!combat,
-    prioritySide: plan.state.startingSide,
-    priorityLabel: sideLabel(plan.state.startingSide),
-    currentSide: plan.state.currentSide,
-    currentSideLabel: plan.state.currentSide ? sideLabel(plan.state.currentSide) : null,
-    nextSide: plan.display.nextSide,
-    nextSideLabel: plan.display.nextSide ? sideLabel(plan.display.nextSide) : null,
-    upcomingSide: plan.display.upcomingSide,
-    upcomingSideLabel: plan.display.upcomingSide ? sideLabel(plan.display.upcomingSide) : null,
-    ready: plan.display.ready,
-    spent: plan.display.spent,
-    defeated: plan.display.defeated,
-    currentCombatant: plan.display.current,
-    nextCandidates: plan.display.nextCandidates.map((candidate) => ({
-      ...candidate,
-      canActivate: (candidate.side === "pc" && canSelectPC) || (candidate.side === "npc" && canSelectNPC)
-    })),
-    allowPriorityChange: game.user.isGM,
-    allowPlayerAdvance: plan.allowPlayers,
-    manualChoiceId: plan.display.manualChoiceId,
-    manualPending: plan.enabled && !!plan.display.manualChoiceId && !plan.manualUsed,
-    canSelectPC,
-    canSelectNPC,
-    gm: game.user.isGM,
-    roundReset: plan.roundReset,
-    moduleId: MODULE_ID
-  };
-
-  const rendered = await renderTemplate(`modules/${MODULE_ID}/templates/zipper-tracker.hbs`, context);
-  const tracker = $(rendered);
-
-  tracker.on("click", "[data-action='set-priority']", async (event) => {
-    event.preventDefault();
-    const side = event.currentTarget.dataset.side;
-    if (!side || !game.user.isGM) return;
-    await combat.setFlag(MODULE_ID, "startingSide", side);
-    await combat.setFlag(MODULE_ID, "currentSide", side);
-    ui.combat.render(true);
-  });
-
-  tracker.on("click", "[data-action='toggle-module']", async (event) => {
-    event.preventDefault();
-    if (!game.user.isGM) return;
-    const current = await combat.getFlag(MODULE_ID, "enabled");
-    await combat.setFlag(MODULE_ID, "enabled", !current);
-    if (!current && !(await combat.getFlag(MODULE_ID, "startingSide"))) {
-      await chooseStartingSide(combat);
-    }
-    ui.combat.render(true);
-  });
-
-  tracker.on("click", "[data-action='activate']", async (event) => {
-    event.preventDefault();
-    const id = event.currentTarget.dataset.combatantId;
-    if (!id) return;
-    if (!(await combat.getFlag(MODULE_ID, "enabled"))) return;
-    const side = event.currentTarget.dataset.side;
-    if (side === "pc" && !(plan.allowPlayers || game.user.isGM)) return;
-    if (side === "npc" && !game.user.isGM) return;
-    await combat.setFlag(MODULE_ID, MANUAL_CHOICE_FLAG, id);
-    await combat.nextTurn();
-  });
-
-  html.find(".directory-header").after(tracker);
+  const hint = $(`<div class="zipper-hint" style="margin:4px 8px;font-size:11px;opacity:.85;">
+    Zipper ${enabled ? "<strong>ENABLED</strong>" : "disabled"}. Use header buttons to toggle or set Priority.
+  </div>`);
+  html.find(".directory-header").append(hint);
 });
 
 /* ---------------------------------------------------------
