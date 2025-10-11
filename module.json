@@ -1,15 +1,26 @@
 {
-  "id": "wng-zipper-initiative",
-  "type": "module",
+  "id": "wng-zipper",
   "title": "Wrath & Glory — Zipper Initiative",
   "description": "Implements strict alternate-activation (\"zipper\") initiative for Wrath & Glory. Sides alternate (PCs ↔ NPCs) each activation, respecting a Priority side each round. Players may select which PC acts next; the GM always retains control.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "authors": [
     {
       "name": "Ariel Cember",
       "url": "https://github.com/acemb-rso"
     }
   ],
+  "compatibility": {
+    "minimum": "11",
+    "verified": "12",
+    "maximum": "13"
+  },
+  "system": ["wrath-and-glory"],
+  "esmodules": ["scripts/wng-zipper.js"],
+  "styles": [],
+  "packs": [],
+  "socket": false,
+  "manifest": "https://raw.githubusercontent.com/acemb-rso/wng-zipper/main/module.json",
+  "download": "https://github.com/acemb-rso/wng-zipper/archive/refs/heads/main.zip",
   "url": "https://github.com/acemb-rso/wng-zipper",
   "bugs": "https://github.com/acemb-rso/wng-zipper/issues",
   "readme": "https://github.com/acemb-rso/wng-zipper/blob/main/README.md",
