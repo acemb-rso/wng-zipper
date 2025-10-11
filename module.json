@@ -6,7 +6,6 @@
   "authors": [
     {
       "name": "Ariel Cember",
-      "email": "",
       "url": "https://github.com/acemb-rso"
     }
   ],
@@ -24,10 +23,27 @@
   "download": "https://github.com/acemb-rso/wng-zipper/archive/refs/heads/main.zip",
   "url": "https://github.com/acemb-rso/wng-zipper",
   "bugs": "https://github.com/acemb-rso/wng-zipper/issues",
-  "license": "MIT",
   "readme": "https://github.com/acemb-rso/wng-zipper/blob/main/README.md",
   "changelog": "https://github.com/acemb-rso/wng-zipper/blob/main/CHANGELOG.md",
+  "license": "MIT",
+  "versionAvailability": "stable",
+  "esmodules": [
+    "scripts/wng-zipper.js"
+  ],
+  "scripts": [],
+  "styles": [],
+  "packs": [],
+  "languages": [],
+  "media": [],
+  "socket": false,
   "allowBugReporter": true,
+  "manifest": "https://raw.githubusercontent.com/acemb-rso/wng-zipper/main/module.json",
+  "download": "https://github.com/acemb-rso/wng-zipper/archive/refs/heads/main.zip",
+  "compatibility": {
+    "minimum": "11",
+    "verified": "12",
+    "maximum": "13"
+  },
   "relationships": {
     "systems": [
       {
@@ -38,8 +54,8 @@
           "verified": "6"
         }
       }
-    ]
+    ],
+    "requires": []
   },
-  "flags": {},
-  "manifestPlusVersion": "1.2.0"
+  "flags": {}
 }
