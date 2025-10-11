@@ -1,0 +1,15 @@
+# Foundry module ignores
+.DS_Store
+Thumbs.db
+node_modules/
+dist/
+.env
+*.log
+*.zip
+.idea/
+.vscode/
+coverage/
+
+# System-specific
+*.rej
+*.patch
