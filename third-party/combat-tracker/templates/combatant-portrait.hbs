@@ -1,0 +1,83 @@
+<div class="combatant-wrapper" style="background-image: url('{{img}}');{{#if defeated}}filter: grayscale(1);{{/if}}">
+
+    {{#if hasPortraitResource}}
+    <div class="portrait-bar" style="height: calc( 100% - {{portraitResource.percentage}}% );"></div>
+    {{/if}}
+
+    <i style="{{#if hasRolled}}display: none;{{/if}}{{#unless owner}}display: none;{{/unless}}"  {{#if
+        initiativeData.isRollIconImg}}style="background-image: url('{{initiativeData.rollIcon}}');"
+        class="roll-initiative" {{else}}class="{{initiativeData.rollIcon}} roll-initiative" {{/if}}></i>
+
+    <div class="portrait-pass" style="{{#unless showPass}}display: none;{{/unless}}{{#unless
+        hasRolled}}display: none;{{/unless}}{{#unless owner}}display: none;{{/unless}}">
+        <i data-action="player-pass" class="fa-solid fa-chevrons-right"></i>
+    </div>
+
+
+
+    <div class="overlay-ui-container">
+    {{#if resource.max}}
+        <div class="tracked-attribute-bar-max" style="order: {{barsOrder.bar1}};margin-left: {{barsOrder.bar1ML}};{{#unless showBars}}display: none;{{/unless}}" >
+        <div class="tracked-attribute-bar-current" style="height: {{resource.percentage}}%;"></div>
+        </div>
+    {{/if}}
+    {{#if resource2.max}}
+        <div class="tracked-attribute-bar-max" style="order: {{barsOrder.bar2}};margin-left: {{barsOrder.bar2ML}};{{#unless showBars}}display: none;{{/unless}}">
+        <div class="tracked-attribute-bar-current secondary-attribute" style="height: {{resource2.percentage}}%;"></div>
+        </div>
+    {{/if}}
+    <div class="portrait-initiative"  style="order: {{barsOrder.init}};margin-left: calc(var(--combatant-portrait-size) * 0.05 * {{barsOrder.initBars}}); {{#unless showInitiative}}display: none;{{/unless}}{{#if
+        isInitiativeNaN}}display:none;{{/if}}">
+        <i {{#if initiativeData.isIconImg}}style="background-image: url('{{initiativeData.icon}}');"
+            {{else}}class="{{initiativeData.icon}}" {{/if}}></i>
+        <span class="portrait-initiative-text">{{initiativeData.value}}</span>
+    </div>
+        <ul class="effects-container" style="order: {{barsOrder.effects}};{{#unless hasEffects}}display:none;{{/unless}}" >
+        {{#each effects as |effect|}}
+        <li class="portrait-effect" data-uuid="{{effect.uuid}}" style="background-image: url('{{effect.img}}');">
+            <div class="percent-border" style="background: conic-gradient(var(--carousel-tooltip-color) {{percent}}%, var(--carousel-tooltip-bg-color) 0);"></div>
+        </li>
+        {{/each}}
+    </ul>
+    </div>
+    <div class="bottom-ui-container">
+
+        <div class="combatant-buttons">
+            {{#if isGM}}
+            <i class="fas fa-eye-slash action" data-action="toggle-hidden"></i>
+            <i class="fas fa-skull action" data-action="toggle-defeated"></i>
+            {{/if}}
+            <i class="fas fa-bullseye-arrow action" data-action="ping"></i>
+        </div>
+
+
+
+        <div class="tracked-attribute-text-container" {{#unless showText}}style="display: none;"{{/unless}}>
+            <i class="tracked-attribute-text-value">{{resource.value}}</i>
+            {{#if resource.max}}
+            <i>/</i>
+            <i>{{resource.max}}</i>
+            {{/if}}
+        </div>
+
+        <div class="tracked-attribute-text-container" {{#unless showText}}style="display: none;"{{/unless}}>
+            <i class="tracked-attribute-text-value secondary-attribute">{{resource2.value}}</i>
+            {{#if resource2.max}}
+            <i>/</i>
+            <i>{{resource2.max}}</i>
+            {{/if}}
+        </div>
+
+        {{#if resSystemIcons}}
+        <div class="system-icons" style="gap: calc(var(--combatant-portrait-size)*{{systemIconsSizeMulti}});">
+            {{#each resSystemIcons}}
+            <i data-index="{{@index}}" data-id="{{id}}" class="system-icon {{icon}} {{#if hasCallback}}{{#if enabled}}callback{{/if}}{{/if}}" style="color: {{color}};{{#unless visible}}display: none;{{/unless}}{{#unless enabled}}filter: grayscale(1);{{/unless}}{{#if fontSize}}font-size: {{fontSize}};{{/if}}"></i>
+            {{/each}}
+        </div>
+        {{/if}}
+
+    </div>
+    {{#if hasPlayerOwner}}
+    <div class="image-border"></div>
+    {{/if}}
+</div>

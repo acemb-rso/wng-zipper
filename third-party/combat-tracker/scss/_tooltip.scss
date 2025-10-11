@@ -1,0 +1,162 @@
+#tooltip.combat-dock-tooltip{
+
+    border: 1px solid var(--carousel-tooltip-color);
+    border-radius: var(--combatant-portrait-border-radius);
+    box-shadow: 0px 0px 10px 0px rgba(0, 0, 0, 0.873);
+    background: var(--carousel-tooltip-bg-color);
+    padding: 0;
+    opacity: 0.8;
+    min-width: 200px;
+
+    & .combat-dock-tooltip-wrapper{   
+
+        box-shadow: inset 0px 0px 10px 0px rgba(0, 0, 0, 0.873);
+        border-radius: 0px;
+        padding: 1rem ;
+        border-radius: var(--combatant-portrait-border-radius);
+        
+            font-family: 'Amiri';
+
+            & .initiative{
+                display: flex;
+                align-items: center;
+
+                & i{
+                    height: 1.5rem;
+                    aspect-ratio: 1;
+                    background-position: center;
+                    background-size: contain;
+                    background-repeat: no-repeat;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                }
+            }
+
+            & .portrait-header{
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+
+            & h2{
+                border:none;
+                text-align: left;
+                margin: 0;
+            }
+
+            & h3{
+                margin: 0;
+            }
+
+            & .spacer{
+                min-width: 0.5rem;
+            }
+        
+            & p{
+                color: var(--color-text-light-primary);
+                margin: 0;
+                margin-top: 0.5rem;
+                text-align: left;
+            }
+        
+            & ul{
+                list-style: none;
+                padding: 0;
+                padding-top: 1rem;
+                margin: 0;
+                text-align: left;
+
+                & .effect-description{
+
+                    margin-bottom: 0.5rem;
+                    margin-bottom: 0.5rem;
+                    color: var(--color-text-light-primary);
+                    padding-left: 1rem;
+                    font-size: smaller;
+
+                    & .content-link{
+                        background: transparent;
+                        border: none;
+                        padding: 0;
+                        margin: 0;
+                    }
+                }
+            }
+
+            & li{
+                display: flex;
+                align-items: flex-end;
+                margin-bottom: 0.3rem;
+                position: relative;
+
+                &.effects-list{
+                    align-items: flex-start;
+                }
+
+                .percent-border {
+                    position: absolute;
+                    aspect-ratio: 1/1;
+                    height: calc(1.2em + 2px);
+                    border-radius: 10%;
+                    z-index: -1;
+                    left: -1px;
+                    top: -1px;
+                }
+
+                & span{
+                    display: flex;
+                    align-items: center;
+                    gap: 0.2em;
+                }
+
+                & i{
+                    display: flex;
+                    height: 100%;
+                    align-items: center;
+                    line-height: 100%;
+                    align-self: center;
+                    justify-content: center;
+                }
+
+                & .tooltip-duration{
+                    margin-left: auto;
+                    line-height: 0;
+                    & i{
+                        font-size: 0.8rem;
+                    }
+                }
+
+            }
+        
+            & img{
+                width: 1.2em;
+                height: 1.2em;
+                object-fit: contain;
+                border:none;
+                margin-right: 0.5rem;
+            }
+
+            & li i.icon{
+                font-size: 1.2em;
+                text-shadow: 0px 0px 3px;
+                text-align: center;
+                width: 1.2em;
+                margin-right: 0.5rem;
+            }
+
+            & .system-icons{
+                font-size: 0.5rem;
+                opacity: 1;
+                display: flex;
+                width: 100%;
+                justify-content: flex-end;
+                align-items: center;
+                gap: calc(var(--combatant-portrait-size)*.1);
+                margin-top: calc(var(--combatant-portrait-size)*.1);
+                text-shadow: 0 0 5px, 0 0 2px #000, 0 0 2px #000, 0 0 2px #000;
+                flex-wrap: wrap-reverse;
+            }
+    }
+
+}
