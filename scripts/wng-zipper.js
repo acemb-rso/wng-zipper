@@ -9,6 +9,7 @@
  *******************************************************************************************/
 
 const MODULE_ID = "wng-zipper";
+const MANUAL_CHOICE_FLAG = "manualChoice";
 
 /* ---------------------------------------------------------
  * Utility helpers
@@ -25,6 +26,201 @@ const isPC = (c) => {
     return false;
   }
 };
+
+const STATUS_LABELS = {
+  pending: "Pending",
+  current: "Current",
+  complete: "Complete",
+  defeated: "Defeated"
+};
+
+const formatStatusLabel = (status, entry) => {
+  if (entry?.isDefeated) return STATUS_LABELS.defeated;
+  if (status && STATUS_LABELS[status]) return STATUS_LABELS[status];
+  if (entry?.acted) return "Acted";
+  return "Ready";
+};
+
+const sanitizeEntry = (entry, manualId) => {
+  const statusLabel = formatStatusLabel(entry.status, entry);
+  return {
+    id: entry.id,
+    name: entry.name,
+    img: entry.img,
+    side: entry.side,
+    acted: entry.acted,
+    isCurrent: entry.isCurrent,
+    isPending: entry.isPending,
+    isComplete: entry.isComplete,
+    isDefeated: entry.isDefeated,
+    status: entry.status,
+    statusLabel,
+    hidden: entry.hidden,
+    manualSelected: !!manualId && entry.id === manualId
+  };
+};
+
+async function evaluateZipperState(combat, opts = {}) {
+  const preview = !!opts.preview;
+  const forceStart = !!opts.forceStartOfRound;
+  const enabled = await combat.getFlag(MODULE_ID, "enabled");
+  const startingSide = await combat.getFlag(MODULE_ID, "startingSide") ?? "pc";
+  const currentSideFlag = forceStart ? null : await combat.getFlag(MODULE_ID, "currentSide");
+  const manualFlag = await combat.getFlag(MODULE_ID, MANUAL_CHOICE_FLAG);
+  const plan = {
+    preview,
+    enabled,
+    rawManualChoiceId: manualFlag,
+    state: {
+      startingSide,
+      currentSide: currentSideFlag,
+      actedIds: [],
+      manualChoiceId: manualFlag,
+      nextSide: null,
+      upcomingSide: null
+    },
+    entries: [],
+    options: [],
+    display: {
+      ready: { pc: [], npc: [] },
+      spent: { pc: [], npc: [] },
+      defeated: { pc: [], npc: [] },
+      current: null,
+      nextCandidates: [],
+      nextSide: null,
+      upcomingSide: null,
+      manualChoiceId: manualFlag
+    },
+    choice: null,
+    manualUsed: false,
+    needsChoice: false,
+    clearActed: !!forceStart,
+    roundReset: false,
+    roundResetMessage: null,
+    announceMessage: null,
+    allowPlayers: game.settings.get(MODULE_ID, "playersCanAdvance")
+  };
+
+  if (!enabled) return plan;
+
+  const turns = combat.turns || [];
+  if (!turns.length) return plan;
+
+  const acted = new Set(await combat.getFlag(MODULE_ID, "actedIds") ?? []);
+  if (forceStart) acted.clear();
+  plan.state.actedIds = Array.from(acted);
+
+  const entries = turns.map((turn, index) => {
+    const doc = combat.combatants.get(turn.id) ?? turn;
+    const status = doc?.getFlag?.("wrath-and-glory", "combatStatus") ?? null;
+    const isDefeated = doc?.isDefeated ?? turn.isDefeated ?? turn.defeated ?? false;
+    const hidden = !!(turn.hidden ?? doc?.hidden);
+    const entry = {
+      id: turn.id,
+      index,
+      name: turn.name,
+      img: turn.token?.texture?.src || turn.img,
+      side: isPC(turn) ? "pc" : "npc",
+      acted: acted.has(turn.id),
+      isCurrent: combat.combatant?.id === turn.id,
+      isPending: doc?.isPending ?? status === "pending",
+      isComplete: doc?.isComplete ?? status === "complete",
+      isDefeated,
+      status,
+      hidden,
+      doc
+    };
+    return entry;
+  });
+
+  plan.entries = entries;
+
+  const visibleEntries = entries.filter(e => !e.hidden || game.user.isGM);
+  const available = (side, set = acted) => entries.filter((e) => {
+    if (e.side !== side) return false;
+    if (e.isDefeated) return false;
+    if (set.has(e.id)) return false;
+    if (e.hidden && !game.user.isGM) return false;
+    return true;
+  });
+  const freshPool = (side) => entries.filter((e) => {
+    if (e.side !== side) return false;
+    if (e.isDefeated) return false;
+    if (e.hidden && !game.user.isGM) return false;
+    return true;
+  });
+
+  const pcAvail = available("pc", acted);
+  const npcAvail = available("npc", acted);
+
+  let nextSide = plan.state.currentSide || plan.state.startingSide;
+  let options = [];
+  let choice = null;
+  let manualEntry = entries.find(e => e.id === plan.state.manualChoiceId && !e.isDefeated && !acted.has(e.id));
+
+  if (!pcAvail.length && !npcAvail.length) {
+    plan.roundReset = true;
+    plan.clearActed = true;
+    nextSide = plan.state.startingSide;
+    options = freshPool(plan.state.startingSide);
+    choice = options[0] ?? null;
+    if (choice) {
+      plan.roundResetMessage = `<strong>Zipper:</strong> All combatants acted. New round begins with <em>${nextSide.toUpperCase()}</em>.`;
+    }
+    plan.display.upcomingSide = nextSide;
+  } else {
+    if (nextSide === "pc" && !pcAvail.length) nextSide = "npc";
+    if (nextSide === "npc" && !npcAvail.length) nextSide = "pc";
+
+    options = nextSide === "pc" ? pcAvail : npcAvail;
+    if (options.length) {
+      if (manualEntry && manualEntry.side === nextSide && options.some(o => o.id === manualEntry.id)) {
+        choice = manualEntry;
+        plan.manualUsed = true;
+      } else {
+        manualEntry = null;
+        const needsChoice = nextSide === "pc" && plan.allowPlayers && options.length > 1;
+        plan.needsChoice = needsChoice;
+        if (!needsChoice) {
+          choice = options[0];
+        }
+      }
+
+      const opposingHasOptions = nextSide === "pc" ? npcAvail.length > 0 : pcAvail.length > 0;
+      plan.display.upcomingSide = opposingHasOptions ? (nextSide === "pc" ? "npc" : "pc") : nextSide;
+      if (!plan.roundReset) {
+        plan.announceMessage = `<em>Alternate Activation:</em> <strong>${nextSide.toUpperCase()}</strong> act.`;
+      }
+    }
+  }
+
+  plan.options = options;
+  plan.choice = choice;
+  plan.state.manualChoiceId = manualEntry ? manualEntry.id : null;
+  plan.display.manualChoiceId = plan.state.manualChoiceId;
+  plan.display.nextCandidates = options.filter(e => !e.hidden || game.user.isGM).map(e => sanitizeEntry(e, plan.state.manualChoiceId));
+  plan.display.nextSide = options.length ? nextSide : null;
+  const currentVisible = visibleEntries.find(e => e.isCurrent) ?? null;
+  plan.display.current = currentVisible ? sanitizeEntry(currentVisible, plan.state.manualChoiceId) : null;
+
+  for (const entry of visibleEntries) {
+    const sanitized = sanitizeEntry(entry, plan.state.manualChoiceId);
+    if (entry.isDefeated) {
+      plan.display.defeated[entry.side].push(sanitized);
+      continue;
+    }
+    if (entry.acted || entry.isComplete) {
+      plan.display.spent[entry.side].push(sanitized);
+    } else {
+      plan.display.ready[entry.side].push(sanitized);
+    }
+  }
+
+  plan.state.nextSide = plan.display.nextSide;
+  plan.state.upcomingSide = plan.display.upcomingSide;
+
+  return plan;
+}
 
 /* ---------------------------------------------------------
  * Settings
@@ -349,6 +545,18 @@ Hooks.once("ready", () => {
       await c.setFlag(MODULE_ID, "startingSide", side);
       await c.setFlag(MODULE_ID, "currentSide", side);
       ui.combat.render(); return true;
+    },
+    async advanceTo(combatantId) {
+      const c = game.combat; if (!c) return false;
+      if (!combatantId) return false;
+      if (!(await c.getFlag(MODULE_ID, "enabled"))) return false;
+      await c.setFlag(MODULE_ID, MANUAL_CHOICE_FLAG, combatantId);
+      await c.nextTurn();
+      return true;
+    },
+    async getState(opts = {}) {
+      const c = game.combat; if (!c) return null;
+      return evaluateZipperState(c, { preview: true, ...(opts || {}) });
     }
   };
   const mod = game.modules.get(MODULE_ID);
