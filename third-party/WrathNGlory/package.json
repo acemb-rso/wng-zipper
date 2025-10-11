@@ -1,0 +1,31 @@
+{
+  "name": "wrathandglory-foundryvtt",
+  "version": "1.0.0",
+  "description": "The **official** system for playing Warhammer 40k: Wrath & Glory on [Foundry VTT](https://foundryvtt.com/). Created by Moo Man.",
+  "main": "wrath-and-glory.js",
+  "scripts": {
+    "build": "node scriptPacker.js&& cross-env NODE_ENV=development rollup --config rollup.config.js --watch",
+    "release": "node scriptPacker.js&& cross-env NODE_ENV=production rollup --config rollup.config.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moo-man/WrathAndGlory-FoundryVTT.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/moo-man/WrathAndGlory-FoundryVTT/issues"
+  },
+  "homepage": "https://github.com/moo-man/WrathAndGlory-FoundryVTT#readme",
+  "devDependencies": {
+    "cross-env": "^7.0.3",
+    "rollup": "^2.79.1",
+    "rollup-plugin-copy": "^3.4.0",
+    "rollup-plugin-copy-watch": "^0.0.1",
+    "rollup-plugin-jscc": "^2.0.0",
+    "rollup-plugin-postcss": "^4.0.2",
+    "sass": "^1.55.0",
+    "scss": "^0.2.4"
+  }
+}

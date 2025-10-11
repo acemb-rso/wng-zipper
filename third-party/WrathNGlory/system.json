@@ -1,0 +1,73 @@
+{
+  "id": "wrath-and-glory",
+  "title": "Warhammer 40,000: Wrath & Glory",
+  "description": "Explore the setting of Warhammer 40,000: Darktide as Inquisitor Grendyl dispatches you to a lost region of Hive Tertium. Play Darktide? Bring your character to life by importing them directly into Foundry!",
+  "version": "7.3.0",
+  "compatibility" : {
+    "minimum" : 13,
+    "verified" : 13,
+    "maximum" : 13  
+  },
+  "authors" : [
+    {
+      "name": "Moo Man",
+      "email": "russellt@cubicle7games.com",
+      "discord": "moo.man",
+      "reddit": "u/mooman10"
+    },
+    {
+      "name": "Thul"
+    },
+    {
+      "name" : "Perfectro"
+    }
+  ],
+  "scripts": ["./wrath-and-glory.js"],
+  "esmodules": [],
+  "styles": ["./wrath-and-glory.css"],
+  "packs": [],
+  "languages": [
+    {
+      "lang": "en",
+      "name": "English",
+      "path": "lang/en.json"
+    }
+  ],
+  "media": [
+    {
+      "type": "cover",
+      "url": "https://user-images.githubusercontent.com/28637157/146312294-3568bd17-9556-4a66-8072-905b42d3cff7.png"
+    }
+  ],
+  "flags" : {
+    "hotReload": { 
+      "extensions": ["css", "hbs", "json"]
+    }
+  },
+  "relationships": {
+    "requires": [{
+      "id": "warhammer-lib",
+      "type": "module",
+      "manifest": "https://raw.githubusercontent.com/moo-man/WarhammerLibrary-FVTT/2.6.1/module.json",
+      "compatibility": {
+        "minimum" : "2.6.1",
+        "verified": "2.6.1"
+      }
+    }]
+  },
+  "background" : "/modules/wng-core/assets/images/cover.webp",
+  "grid": {
+    "distance": 1,
+    "units": "m",
+    "type": 1,
+    "diagonals": 4
+  },
+  "primaryTokenAttribute": null,
+  "secondaryTokenAttribute": null,
+  "url": "https://github.com/moo-man/WrathAndGlory-FoundryVTT",
+  "socket": true,
+  "manifest": "https://github.com/moo-man/WrathAndGlory-FoundryVTT/releases/latest/download/system.json",
+  "download": "https://github.com/moo-man/WrathAndGlory-FoundryVTT/releases/download/7.3.0/wrath-and-glory.zip",
+  "license": "LICENSE.txt"
+}
+
