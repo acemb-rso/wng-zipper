@@ -8,7 +8,7 @@
  * GM always retains override authority. Falls back to default Foundry initiative if disabled.
  *******************************************************************************************/
 
-const MODULE_ID = "wng-zipper";
+const MODULE_ID = "wng-zipper-initiative";
 const MANUAL_CHOICE_FLAG = "manualChoice";
 
 /* ---------------------------------------------------------
