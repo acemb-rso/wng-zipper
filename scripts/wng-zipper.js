@@ -12,6 +12,7 @@ const MODULE_ID = "wng-zipper-initiative";
 const MANUAL_CHOICE_FLAG = "manualChoice";
 const DOCK_TEMPLATE = `modules/${MODULE_ID}/templates/zipper-tracker.hbs`;
 const DOCK_WRAPPER_CLASS = "wng-zipper-tracker-container";
+const DOCK_ROOT_ID = "wng-zipper-dock";
 
 /* ---------------------------------------------------------
  * Utility helpers
@@ -665,22 +666,41 @@ function bindDockListeners(wrapper) {
   });
 }
 
-async function renderZipperDock(app, html) {
-  const wrapper = html.find(`.${DOCK_WRAPPER_CLASS}`);
-  if (wrapper.length) wrapper.remove();
+function ensureDockRoot() {
+  let root = document.getElementById(DOCK_ROOT_ID);
+  if (!root) {
+    root = document.createElement("section");
+    root.id = DOCK_ROOT_ID;
+    root.classList.add("wng-zipper-dock-root");
+    document.body.appendChild(root);
+  }
+  return $(root);
+}
 
-  const combat = app.viewed ?? game.combat ?? null;
+async function renderStandaloneDock() {
+  const root = ensureDockRoot();
+  const combat = game.combat ?? null;
   const context = await buildDockContext(combat);
   const rendered = await renderTemplate(DOCK_TEMPLATE, context);
-  const dock = $(`<div class="${DOCK_WRAPPER_CLASS}">${rendered}</div>`);
-  bindDockListeners(dock);
+  root.html(`<div class="${DOCK_WRAPPER_CLASS}">${rendered}</div>`);
+  bindDockListeners(root);
+  root.toggleClass("is-active", !!context.enabled);
+  root.toggleClass("has-combat", !!context.hasCombat);
+}
 
-  const footer = html.find(".directory-footer");
-  if (footer.length) {
-    footer.prepend(dock);
-  } else {
-    html.append(dock);
-  }
+let dockRenderPending = false;
+function requestDockRender() {
+  if (!game?.ready) return;
+  if (dockRenderPending) return;
+  dockRenderPending = true;
+  setTimeout(async () => {
+    dockRenderPending = false;
+    try {
+      await renderStandaloneDock();
+    } catch (err) {
+      log(err);
+    }
+  }, 0);
 }
 
 async function handleToggleZipper(combat) {
@@ -690,6 +710,7 @@ async function handleToggleZipper(combat) {
     await chooseStartingSide(combat);
   }
   ui.combat.render(true);
+  requestDockRender();
 }
 
 async function handleSetPriority(combat, side) {
@@ -698,6 +719,7 @@ async function handleSetPriority(combat, side) {
   await combat.setFlag(MODULE_ID, "currentSide", side);
   await combat.setFlag(MODULE_ID, "actedIds", []);
   ui.combat.render(true);
+  requestDockRender();
 }
 
 async function handleManualActivation(combat, combatantId) {
@@ -718,11 +740,25 @@ async function handleManualActivation(combat, combatantId) {
   await combat.setFlag(MODULE_ID, MANUAL_CHOICE_FLAG, combatantId);
   await combat.nextTurn();
   ui.combat.render(true);
+  requestDockRender();
 }
 
 Hooks.on("renderCombatTracker", async (app, html) => {
-  await renderZipperDock(app, html);
+  requestDockRender();
 });
+
+Hooks.once("ready", () => {
+  requestDockRender();
+});
+
+const dockRefreshHooks = [
+  "createCombat", "deleteCombat", "updateCombat", "combatTurn",
+  "createCombatant", "updateCombatant", "deleteCombatant"
+];
+
+for (const hook of dockRefreshHooks) {
+  Hooks.on(hook, () => requestDockRender());
+}
 
 /* ---------------------------------------------------------
  * Public API
