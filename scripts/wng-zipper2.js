@@ -10,6 +10,8 @@
 
 const MODULE_ID = "wng-zipper-initiative";
 const MANUAL_CHOICE_FLAG = "manualChoice";
+const DOCK_TEMPLATE = `modules/${MODULE_ID}/templates/zipper-tracker.hbs`;
+const DOCK_WRAPPER_CLASS = "wng-zipper-tracker-container";
 
 /* ---------------------------------------------------------
  * Utility helpers
@@ -59,6 +61,25 @@ const sanitizeEntry = (entry, manualId) => {
     manualSelected: !!manualId && entry.id === manualId
   };
 };
+
+const canActivateEntry = (entry, nextSide, allowPlayers) => {
+  if (!entry) return false;
+  if (nextSide && entry.side !== nextSide) return false;
+  if (entry.side === "npc") return game.user.isGM;
+  return game.user.isGM || allowPlayers;
+};
+
+const SIDE_LABELS = {
+  pc: "PCs",
+  npc: "NPCs"
+};
+
+const toSideLabel = (side) => SIDE_LABELS[side] ?? null;
+
+const cloneDisplayGroup = (group) => ({
+  pc: [...(group?.pc ?? [])],
+  npc: [...(group?.npc ?? [])]
+});
 
 async function evaluateZipperState(combat, opts = {}) {
   const preview = !!opts.preview;
@@ -198,7 +219,13 @@ async function evaluateZipperState(combat, opts = {}) {
   plan.choice = choice;
   plan.state.manualChoiceId = manualEntry ? manualEntry.id : null;
   plan.display.manualChoiceId = plan.state.manualChoiceId;
-  plan.display.nextCandidates = options.filter(e => !e.hidden || game.user.isGM).map(e => sanitizeEntry(e, plan.state.manualChoiceId));
+  plan.display.nextCandidates = options
+    .filter(e => !e.hidden || game.user.isGM)
+    .map((e) => {
+      const sanitized = sanitizeEntry(e, plan.state.manualChoiceId);
+      sanitized.canActivate = canActivateEntry(sanitized, plan.display.nextSide, plan.allowPlayers);
+      return sanitized;
+    });
   plan.display.nextSide = options.length ? nextSide : null;
   const currentVisible = visibleEntries.find(e => e.isCurrent) ?? null;
   plan.display.current = currentVisible ? sanitizeEntry(currentVisible, plan.state.manualChoiceId) : null;
@@ -422,6 +449,7 @@ async function computeNextZipperCombatant(combat, opts = {}) {
   const turns = combat.turns || [];
   if (!turns.length) return null;
 
+  const manualId = await combat.getFlag(MODULE_ID, MANUAL_CHOICE_FLAG);
   const acted = new Set(await combat.getFlag(MODULE_ID, "actedIds") ?? []);
   if (opts.forceStartOfRound) acted.clear();
   let currentSide = await combat.getFlag(MODULE_ID, "currentSide");
@@ -439,6 +467,22 @@ async function computeNextZipperCombatant(combat, opts = {}) {
   const pcAvail = aliveAvailOfSide("pc");
   const npcAvail = aliveAvailOfSide("npc");
 
+  let manualEntry = null;
+  if (manualId) {
+    manualEntry = turns.find((c) => c.id === manualId) ?? null;
+    if (manualEntry) {
+      const defeated = manualEntry.isDefeated ?? manualEntry.defeated ?? false;
+      if (defeated || acted.has(manualEntry.id)) manualEntry = null;
+    }
+    if (!manualEntry) {
+      await combat.unsetFlag(MODULE_ID, MANUAL_CHOICE_FLAG);
+    }
+  }
+
+  if (manualEntry) {
+    nextSide = isPC(manualEntry) ? "pc" : "npc";
+  }
+
   if (!pcAvail.length && !npcAvail.length) {
     await combat.setFlag(MODULE_ID, "actedIds", []);
     await combat.setFlag(MODULE_ID, "currentSide", startingSide);
@@ -455,10 +499,16 @@ async function computeNextZipperCombatant(combat, opts = {}) {
   if (nextSide === "npc" && !npcAvail.length) nextSide = "pc";
 
   let candidates = nextSide === "pc" ? pcAvail : npcAvail;
-  if (!candidates.length) return null;
+  if (!candidates.length) {
+    if (manualEntry) {
+      candidates = [manualEntry];
+    } else {
+      return null;
+    }
+  }
 
-  let chosen = candidates[0];
-  if (nextSide === "pc" && candidates.length > 1) {
+  let chosen = manualEntry ?? candidates[0];
+  if (!manualEntry && nextSide === "pc" && candidates.length > 1) {
     const selection = await selectPCDialog(candidates);
     if (selection) {
       chosen = selection;
@@ -469,6 +519,7 @@ async function computeNextZipperCombatant(combat, opts = {}) {
 
   const chosenSide = isPC(chosen) ? "pc" : "npc";
   await combat.setFlag(MODULE_ID, "currentSide", chosenSide);
+  if (manualId) await combat.unsetFlag(MODULE_ID, MANUAL_CHOICE_FLAG);
 
   await ChatMessage.create({
     content: `<em>Alternate Activation:</em> <strong>${chosenSide.toUpperCase()}</strong> act.`,
@@ -516,16 +567,159 @@ async function selectPCDialog(candidates) {
 }
 
 /* ---------------------------------------------------------
- * UI quality-of-life
+ * Tracker dock rendering
  * --------------------------------------------------------- */
-Hooks.on("renderCombatTracker", (app, html) => {
-  if (!game.combat) return;
-  const enabled = game.combat.getFlag(MODULE_ID, "enabled");
-  html.find(".directory-header .zipper-hint").remove();
-  const hint = $(`<div class="zipper-hint" style="margin:4px 8px;font-size:11px;opacity:.85;">
-    Zipper ${enabled ? "<strong>ENABLED</strong>" : "disabled"}. Use header buttons to toggle or set Priority.
-  </div>`);
-  html.find(".directory-header").append(hint);
+async function buildDockContext(combat) {
+  const gm = game.user.isGM;
+  const base = {
+    gm,
+    hasCombat: !!combat,
+    enabled: false,
+    priorityLabel: "—",
+    nextSideLabel: null,
+    upcomingSideLabel: null,
+    roundReset: false,
+    manualPending: false,
+    currentCombatant: null,
+    nextCandidates: [],
+    ready: cloneDisplayGroup(),
+    spent: cloneDisplayGroup(),
+    defeated: cloneDisplayGroup(),
+    canSelectPC: false,
+    canSelectNPC: false
+  };
+
+  if (!combat) return base;
+
+  const plan = await evaluateZipperState(combat, { preview: true });
+  const priorityLabel = toSideLabel(plan.state.startingSide) ?? "—";
+  const nextSideLabel = toSideLabel(plan.display.nextSide) ?? null;
+  const upcomingSideLabel = toSideLabel(plan.display.upcomingSide) ?? null;
+  const ready = cloneDisplayGroup(plan.display.ready);
+  const spent = cloneDisplayGroup(plan.display.spent);
+  const defeated = cloneDisplayGroup(plan.display.defeated);
+  const nextCandidates = (plan.display.nextCandidates ?? []).map((entry) => ({
+    ...entry,
+    canActivate: entry.canActivate ?? canActivateEntry(entry, plan.display.nextSide, plan.allowPlayers)
+  }));
+
+  const canSelectPC = plan.enabled && canActivateEntry({ side: "pc" }, plan.display.nextSide, plan.allowPlayers);
+  const canSelectNPC = plan.enabled && canActivateEntry({ side: "npc" }, plan.display.nextSide, plan.allowPlayers);
+
+  return {
+    gm,
+    hasCombat: true,
+    enabled: plan.enabled,
+    priorityLabel,
+    nextSideLabel,
+    upcomingSideLabel,
+    roundReset: plan.roundReset,
+    manualPending: !!plan.state.manualChoiceId && !plan.manualUsed,
+    currentCombatant: plan.display.current ?? null,
+    nextCandidates,
+    ready,
+    spent,
+    defeated,
+    canSelectPC,
+    canSelectNPC,
+    allowPlayers: plan.allowPlayers,
+    combatId: combat.id,
+    nextSide: plan.display.nextSide
+  };
+}
+
+function bindDockListeners(wrapper) {
+  wrapper.off("click.wng-zipper");
+  wrapper.on("click.wng-zipper", "button[data-action]", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const button = event.currentTarget;
+    const action = button.dataset.action;
+    const combat = game.combat;
+    if (!combat) {
+      ui.notifications.warn("No active combat to control.");
+      return;
+    }
+
+    try {
+      switch (action) {
+        case "toggle-module":
+          await handleToggleZipper(combat);
+          break;
+        case "set-priority":
+          await handleSetPriority(combat, button.dataset.side);
+          break;
+        case "activate":
+          await handleManualActivation(combat, button.dataset.combatantId);
+          break;
+        default:
+          break;
+      }
+    } catch (err) {
+      log(err);
+      ui.notifications.error("Zipper dock action failed. See console for details.");
+    }
+  });
+}
+
+async function renderZipperDock(app, html) {
+  const wrapper = html.find(`.${DOCK_WRAPPER_CLASS}`);
+  if (wrapper.length) wrapper.remove();
+
+  const combat = app.viewed ?? game.combat ?? null;
+  const context = await buildDockContext(combat);
+  const rendered = await renderTemplate(DOCK_TEMPLATE, context);
+  const dock = $(`<div class="${DOCK_WRAPPER_CLASS}">${rendered}</div>`);
+  bindDockListeners(dock);
+
+  const footer = html.find(".directory-footer");
+  if (footer.length) {
+    footer.prepend(dock);
+  } else {
+    html.append(dock);
+  }
+}
+
+async function handleToggleZipper(combat) {
+  const enabled = !!(await combat.getFlag(MODULE_ID, "enabled"));
+  await combat.setFlag(MODULE_ID, "enabled", !enabled);
+  if (!enabled && !(await combat.getFlag(MODULE_ID, "startingSide"))) {
+    await chooseStartingSide(combat);
+  }
+  ui.combat.render(true);
+}
+
+async function handleSetPriority(combat, side) {
+  if (!side || !["pc", "npc"].includes(side)) return;
+  await combat.setFlag(MODULE_ID, "startingSide", side);
+  await combat.setFlag(MODULE_ID, "currentSide", side);
+  await combat.setFlag(MODULE_ID, "actedIds", []);
+  ui.combat.render(true);
+}
+
+async function handleManualActivation(combat, combatantId) {
+  if (!combatantId) return;
+  if (!(await combat.getFlag(MODULE_ID, "enabled"))) {
+    ui.notifications.warn("Zipper initiative is disabled for this combat.");
+    return;
+  }
+
+  const plan = await evaluateZipperState(combat, { preview: true });
+  const candidates = plan.display.nextCandidates ?? [];
+  const candidate = candidates.find((c) => c.id === combatantId);
+  if (!candidate || !canActivateEntry(candidate, plan.display.nextSide, plan.allowPlayers)) {
+    ui.notifications.warn("That combatant cannot act right now.");
+    return;
+  }
+
+  await combat.setFlag(MODULE_ID, MANUAL_CHOICE_FLAG, combatantId);
+  await combat.nextTurn();
+  ui.combat.render(true);
+}
+
+Hooks.on("renderCombatTracker", async (app, html) => {
+  await renderZipperDock(app, html);
 });
 
 /* ---------------------------------------------------------
