@@ -17,7 +17,7 @@
   "license": "MIT",
   "versionAvailability": "stable",
   "esmodules": [
-    "scripts/wng-zipper2.js"
+    "scripts/wng-zipper.js"
   ],
   "scripts": [],
   "styles": [],

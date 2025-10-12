@@ -226,7 +226,7 @@
                     </div>
                   </div>
                 </div>
-                {{#if ../canSelectPC}}
+                {{#if canActivate}}
                   <div class="actions">
                     <button data-action="activate" data-combatant-id="{{id}}" data-side="pc">Activate</button>
                   </div>
@@ -252,7 +252,7 @@
                     </div>
                   </div>
                 </div>
-                {{#if ../canSelectNPC}}
+                {{#if canActivate}}
                   <div class="actions">
                     <button data-action="activate" data-combatant-id="{{id}}" data-side="npc">Activate</button>
                   </div>

@@ -1,7 +1,7 @@
 /*******************************************************************************************
  * Wrath & Glory — Zipper Initiative for Foundry VTT
  * Author: Ariel Cember + GPT-5
- * Version: 0.2.0
+ * Version: 0.3.0
  * 
  * Implements strict alternate-activation (PC↔NPC) initiative with a Priority side each round.
  * When multiple PCs are eligible, players choose who acts next.
