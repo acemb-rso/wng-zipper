@@ -13,6 +13,16 @@ const MANUAL_CHOICE_FLAG = "manualChoice";
 const DOCK_TEMPLATE = `modules/${MODULE_ID}/templates/zipper-tracker.hbs`;
 const DOCK_WRAPPER_CLASS = "wng-zipper-tracker-container";
 const DOCK_ROOT_ID = "wng-zipper-dock";
+const DOCK_DEFAULTS = {
+  anchor: "right",
+  topOffset: 120,
+  sideOffset: 16,
+  width: 320,
+  maxHeightBuffer: 160,
+  inactiveOpacity: 0.7,
+  noCombatOpacity: 0.85,
+  backgroundOpacity: 0.35
+};
 
 /* ---------------------------------------------------------
  * Utility helpers
@@ -76,6 +86,48 @@ const SIDE_LABELS = {
 };
 
 const toSideLabel = (side) => SIDE_LABELS[side] ?? null;
+
+const clamp = (value, min, max) => {
+  if (Number.isNaN(value)) return min;
+  return Math.min(Math.max(value, min), max);
+};
+
+function readNumericSetting(key, fallback, { min = Number.NEGATIVE_INFINITY, max = Number.POSITIVE_INFINITY } = {}) {
+  const raw = Number(game.settings.get(MODULE_ID, key));
+  if (Number.isFinite(raw)) return clamp(raw, min, max);
+  return clamp(Number(fallback) || 0, min, max);
+}
+
+function readOpacitySetting(key, fallback) {
+  const numeric = Number(game.settings.get(MODULE_ID, key));
+  if (Number.isFinite(numeric)) return clamp(numeric, 0, 1);
+  return clamp(Number(fallback) || 0, 0, 1);
+}
+
+function getDockStyleConfig() {
+  const anchorSetting = game.settings.get(MODULE_ID, "dockAnchor") ?? DOCK_DEFAULTS.anchor;
+  const anchor = anchorSetting === "left" ? "left" : "right";
+  const top = readNumericSetting("dockTopOffset", DOCK_DEFAULTS.topOffset, { min: 0, max: 2000 });
+  const side = readNumericSetting("dockSideOffset", DOCK_DEFAULTS.sideOffset, { min: 0, max: 2000 });
+  const width = readNumericSetting("dockWidth", DOCK_DEFAULTS.width, { min: 200, max: 1200 });
+  const buffer = readNumericSetting("dockMaxHeightBuffer", DOCK_DEFAULTS.maxHeightBuffer, { min: 0, max: 2000 });
+  const inactiveOpacity = readOpacitySetting("dockInactiveOpacity", DOCK_DEFAULTS.inactiveOpacity);
+  const noCombatOpacity = readOpacitySetting("dockNoCombatOpacity", DOCK_DEFAULTS.noCombatOpacity);
+  const backgroundOpacity = readOpacitySetting("dockBackgroundOpacity", DOCK_DEFAULTS.backgroundOpacity);
+
+  return {
+    anchor,
+    top: `${top}px`,
+    side: `${side}px`,
+    width: `${width}px`,
+    maxHeight: `calc(100vh - ${buffer}px)`,
+    inactiveOpacity: inactiveOpacity.toFixed(2),
+    noCombatOpacity: noCombatOpacity.toFixed(2),
+    backgroundOpacity: backgroundOpacity.toFixed(2),
+    isLeft: anchor === "left",
+    isRight: anchor === "right"
+  };
+}
 
 const cloneDisplayGroup = (group) => ({
   pc: [...(group?.pc ?? [])],
@@ -271,6 +323,93 @@ Hooks.once("init", () => {
     config: true,
     type: Boolean,
     default: true
+  });
+
+  game.settings.register(MODULE_ID, "dockAnchor", {
+    name: "Dock Anchor Side",
+    hint: "Choose which side of the screen the zipper dock should attach to.",
+    scope: "client",
+    config: true,
+    type: String,
+    choices: {
+      right: "Right",
+      left: "Left"
+    },
+    default: DOCK_DEFAULTS.anchor,
+    onChange: () => requestDockRender()
+  });
+
+  game.settings.register(MODULE_ID, "dockTopOffset", {
+    name: "Dock Top Offset (px)",
+    hint: "Distance from the top edge of the screen in pixels.",
+    scope: "client",
+    config: true,
+    type: Number,
+    default: DOCK_DEFAULTS.topOffset,
+    onChange: () => requestDockRender()
+  });
+
+  game.settings.register(MODULE_ID, "dockSideOffset", {
+    name: "Dock Side Offset (px)",
+    hint: "Horizontal distance from the anchored edge in pixels.",
+    scope: "client",
+    config: true,
+    type: Number,
+    default: DOCK_DEFAULTS.sideOffset,
+    onChange: () => requestDockRender()
+  });
+
+  game.settings.register(MODULE_ID, "dockWidth", {
+    name: "Dock Width (px)",
+    hint: "Overall width of the zipper dock in pixels.",
+    scope: "client",
+    config: true,
+    type: Number,
+    default: DOCK_DEFAULTS.width,
+    onChange: () => requestDockRender()
+  });
+
+  game.settings.register(MODULE_ID, "dockMaxHeightBuffer", {
+    name: "Dock Max Height Buffer (px)",
+    hint: "Pixels to subtract from the viewport height when calculating the dock's max height.",
+    scope: "client",
+    config: true,
+    type: Number,
+    default: DOCK_DEFAULTS.maxHeightBuffer,
+    onChange: () => requestDockRender()
+  });
+
+  game.settings.register(MODULE_ID, "dockInactiveOpacity", {
+    name: "Inactive Dock Opacity",
+    hint: "Opacity of the dock when zipper initiative is disabled (0–1).",
+    scope: "client",
+    config: true,
+    type: Number,
+    range: { min: 0, max: 1, step: 0.05 },
+    default: DOCK_DEFAULTS.inactiveOpacity,
+    onChange: () => requestDockRender()
+  });
+
+  game.settings.register(MODULE_ID, "dockNoCombatOpacity", {
+    name: "No-Combat Dock Opacity",
+    hint: "Opacity of the dock when no combat is selected (0–1).",
+    scope: "client",
+    config: true,
+    type: Number,
+    range: { min: 0, max: 1, step: 0.05 },
+    default: DOCK_DEFAULTS.noCombatOpacity,
+    onChange: () => requestDockRender()
+  });
+
+  game.settings.register(MODULE_ID, "dockBackgroundOpacity", {
+    name: "Dock Background Opacity",
+    hint: "Opacity of the dock panel background (0–1).",
+    scope: "client",
+    config: true,
+    type: Number,
+    range: { min: 0, max: 1, step: 0.05 },
+    default: DOCK_DEFAULTS.backgroundOpacity,
+    onChange: () => requestDockRender()
   });
 });
 
@@ -573,6 +712,7 @@ async function selectPCDialog(candidates) {
  * --------------------------------------------------------- */
 async function buildDockContext(combat) {
   const gm = game.user.isGM;
+  const dockStyles = getDockStyleConfig();
   const base = {
     gm,
     hasCombat: !!combat,
@@ -588,7 +728,11 @@ async function buildDockContext(combat) {
     spent: cloneDisplayGroup(),
     defeated: cloneDisplayGroup(),
     canSelectPC: false,
-    canSelectNPC: false
+    canSelectNPC: false,
+    allowPlayers: game.settings.get(MODULE_ID, "playersCanAdvance"),
+    combatId: combat?.id ?? null,
+    nextSide: null,
+    dockStyles
   };
 
   if (!combat) return base;
@@ -627,7 +771,8 @@ async function buildDockContext(combat) {
     canSelectNPC,
     allowPlayers: plan.allowPlayers,
     combatId: combat.id,
-    nextSide: effectiveNextSide
+    nextSide: effectiveNextSide,
+    dockStyles
   };
 }
 
