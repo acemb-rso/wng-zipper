@@ -3,7 +3,7 @@
   "type": "module",
   "title": "Wrath & Glory — Zipper Initiative",
   "description": "Implements strict alternate-activation (\"zipper\") initiative for Wrath & Glory. Sides alternate (PCs ↔ NPCs) each activation, respecting a Priority side each round. Players may select which PC acts next; the GM always retains control.",
-  "version": "0.3.1",
+  "version": "0.3.3",
   "authors": [
     {
       "name": "Ariel Cember",
