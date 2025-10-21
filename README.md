@@ -5,7 +5,7 @@ Automates the alternating initiative from the Wrath and Glory system
 
 **Version:** 0.3.3  
 **Author:** Ariel Cember + GPT-5  
-**Foundry Compatibility:** v11–v12 (possibly v13) 
+**Foundry Compatibility:** v13
 **System:** Wrath & Glory  
 
 ---
