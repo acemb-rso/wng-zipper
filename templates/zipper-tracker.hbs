@@ -1,10 +1,35 @@
 <div class="wng-zipper-tracker {{#unless enabled}}is-disabled{{/unless}}">
   <style>
+    #wng-zipper-dock {
+      position: fixed;
+      top: {{dockStyles.top}};
+      {{#if dockStyles.isLeft}}
+      left: {{dockStyles.side}};
+      right: auto;
+      {{else}}
+      right: {{dockStyles.side}};
+      left: auto;
+      {{/if}}
+      width: {{dockStyles.width}};
+      max-height: {{dockStyles.maxHeight}};
+      overflow-y: auto;
+      z-index: 60;
+      pointer-events: none;
+    }
+    #wng-zipper-dock .wng-zipper-tracker-container {
+      pointer-events: auto;
+    }
+    #wng-zipper-dock:not(.is-active) .wng-zipper-tracker {
+      opacity: {{dockStyles.inactiveOpacity}};
+    }
+    #wng-zipper-dock:not(.has-combat) .wng-zipper-tracker {
+      opacity: {{dockStyles.noCombatOpacity}};
+    }
     .wng-zipper-tracker {
       border-top: 1px solid rgba(255,255,255,0.1);
       margin: 6px 8px 8px;
       padding: 8px;
-      background: rgba(0,0,0,0.35);
+      background: rgba(0,0,0,{{dockStyles.backgroundOpacity}});
       color: #ddd;
       border-radius: 6px;
       font-size: 12px;

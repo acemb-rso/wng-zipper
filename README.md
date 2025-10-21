@@ -47,6 +47,14 @@ The GM always retains override authority, and the module falls back gracefully t
 |----------|--------|----------|-------------|
 | **enabledByDefault** | world | true | Start new combats with Zipper enabled |
 | **playersCanAdvance** | world | true | Allow players to select the next PC |
+| **dockAnchor** | client | right | Anchor the dock to the left or right edge |
+| **dockTopOffset** | client | 120 | Pixels from the top edge before the dock begins |
+| **dockSideOffset** | client | 16 | Pixels from the anchored side |
+| **dockWidth** | client | 320 | Width of the dock in pixels |
+| **dockMaxHeightBuffer** | client | 160 | Pixels removed from the viewport height to compute max height |
+| **dockInactiveOpacity** | client | 0.7 | Dock opacity when zipper initiative is off |
+| **dockNoCombatOpacity** | client | 0.85 | Dock opacity when no combat is active |
+| **dockBackgroundOpacity** | client | 0.35 | Opacity of the dock panel background |
 
 ---
 
