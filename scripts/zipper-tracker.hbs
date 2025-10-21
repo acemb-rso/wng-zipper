@@ -1,49 +1,386 @@
 <div class="wng-zipper-tracker {{#unless enabled}}is-disabled{{/unless}}">
   <style>
+    #wng-zipper-dock {
+      position: fixed;
+      top: {{dockStyles.top}};
+      {{#if dockStyles.isLeft}}
+      left: {{dockStyles.side}};
+      right: auto;
+      {{else}}
+      right: {{dockStyles.side}};
+      left: auto;
+      {{/if}}
+      width: {{dockStyles.width}};
+      max-height: {{dockStyles.maxHeight}};
+      overflow-y: auto;
+      z-index: 60;
+      pointer-events: none;
+    }
+    #wng-zipper-dock .wng-zipper-tracker-container {
+      pointer-events: auto;
+    }
+    #wng-zipper-dock:not(.is-active) .wng-zipper-tracker {
+      opacity: {{dockStyles.inactiveOpacity}};
+    }
+    #wng-zipper-dock:not(.has-combat) .wng-zipper-tracker {
+      opacity: {{dockStyles.noCombatOpacity}};
+    }
     .wng-zipper-tracker {
-      border-top: 1px solid rgba(255,255,255,0.1);
-      margin: 6px 8px 8px;
-      padding: 8px;
-      background: rgba(0,0,0,0.35);
-      color: #ddd;
-      border-radius: 6px;
+      border-top: 2px solid rgba(255, 255, 255, 0.12);
+      margin: 6px 8px 12px;
+      padding: 12px;
+      background: linear-gradient(180deg, rgba(12, 12, 12, 0.95) 0%, rgba(25, 25, 25, {{dockStyles.backgroundOpacity}}) 100%);
+      color: #e7e7e7;
+      border-radius: 10px;
       font-size: 12px;
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
+      backdrop-filter: blur(2px);
     }
-    .wng-zipper-tracker header {
+    .wng-zipper-tracker.is-disabled {
+      opacity: 0.7;
+    }
+    .wng-zipper-tracker .tracker-shell {
       display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      margin-bottom: 6px;
+      flex-direction: column;
+      gap: 12px;
     }
-    .wng-zipper-tracker h4 {
-      margin: 0 0 4px;
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      color: #f5f5f5;
-    }
-    .wng-zipper-tracker .side-summary {
+    .wng-zipper-tracker header.tracker-header {
       display: flex;
       flex-wrap: wrap;
-      gap: 8px;
+      align-items: center;
+      gap: 10px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     }
-    .wng-zipper-tracker .side-summary span {
-      background: rgba(255,255,255,0.08);
-      padding: 4px 6px;
-      border-radius: 4px;
+    .wng-zipper-tracker .round-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 110px;
     }
-    .wng-zipper-tracker .controls button {
-      background: rgba(255,255,255,0.08);
-      border: 1px solid rgba(255,255,255,0.15);
+    .wng-zipper-tracker .round-pill,
+    .wng-zipper-tracker .turn-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4px 12px;
+      border-radius: 999px;
+      text-transform: uppercase;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      font-size: 11px;
+      background: rgba(255, 255, 255, 0.08);
+      color: #ffe7bb;
+      box-shadow: inset 0 0 0 1px rgba(255, 210, 140, 0.2);
+    }
+    .wng-zipper-tracker .turn-pill {
+      color: #d5f0ff;
+      box-shadow: inset 0 0 0 1px rgba(120, 180, 255, 0.25);
+    }
+    .wng-zipper-tracker .status-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      flex: 1 1 auto;
+    }
+    .wng-zipper-tracker .status-pill {
+      background: rgba(255, 255, 255, 0.07);
+      padding: 4px 8px;
+      border-radius: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      font-size: 11px;
+      letter-spacing: 0.04em;
+    }
+    .wng-zipper-tracker .gm-controls {
+      margin-left: auto;
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .wng-zipper-tracker .gm-controls button {
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.18);
       border-radius: 4px;
       color: inherit;
       padding: 3px 8px;
       cursor: pointer;
       font-size: 11px;
+      transition: background 150ms ease, transform 150ms ease;
     }
-    .wng-zipper-tracker .controls button:hover {
-      background: rgba(0,0,0,0.4);
+    .wng-zipper-tracker .gm-controls button:hover {
+      background: rgba(255, 255, 255, 0.18);
+      transform: translateY(-1px);
+    }
+    .wng-zipper-tracker .activation-lane {
+      display: flex;
+      gap: 12px;
+      align-items: stretch;
+    }
+    .wng-zipper-tracker .combatant-card {
+      flex: 1 1 0;
+      display: flex;
+      gap: 12px;
+      background: rgba(14, 14, 14, 0.82);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px;
+      padding: 10px;
+      position: relative;
+      overflow: hidden;
+      min-height: 120px;
+    }
+    .wng-zipper-tracker .combatant-card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: linear-gradient(120deg, rgba(255, 255, 255, 0.06) 0%, rgba(0, 0, 0, 0) 60%);
+      opacity: 0.35;
+    }
+    .wng-zipper-tracker .combatant-card.is-owned {
+      border-color: rgba(173, 216, 255, 0.35);
+      box-shadow: 0 0 12px rgba(120, 180, 255, 0.25);
+    }
+    .wng-zipper-tracker .combatant-card.is-empty {
+      justify-content: center;
+      align-items: center;
+      color: rgba(255, 255, 255, 0.6);
+      font-style: italic;
+    }
+    .wng-zipper-tracker .combatant-card .portrait {
+      position: relative;
+      width: 92px;
+      min-width: 92px;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      cursor: default;
+    }
+    .wng-zipper-tracker .combatant-card .portrait img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .wng-zipper-tracker .combatant-card .portrait[data-action] {
+      cursor: pointer;
+    }
+    .wng-zipper-tracker .portrait-hint {
+      position: absolute;
+      inset: auto 6px 6px;
+      padding: 2px 6px;
+      font-size: 10px;
+      text-transform: uppercase;
+      background: rgba(0, 0, 0, 0.65);
+      border-radius: 4px;
+      letter-spacing: 0.06em;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+    .wng-zipper-tracker .combatant-card .details {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 6px;
+      z-index: 1;
+      flex: 1 1 auto;
+    }
+    .wng-zipper-tracker .combatant-card .details .label {
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.6);
+    }
+    .wng-zipper-tracker .combatant-card .details .name {
+      font-size: 15px;
+      font-weight: 600;
+      color: #fff;
+    }
+    .wng-zipper-tracker .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      font-size: 10px;
+      color: #d6d6d6;
+    }
+    .wng-zipper-tracker .tag {
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 4px;
+      padding: 1px 6px;
+      background: rgba(255, 255, 255, 0.05);
+    }
+    .wng-zipper-tracker .card-action {
+      align-self: flex-start;
+      padding: 4px 10px;
+      border-radius: 4px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      background: rgba(120, 180, 255, 0.16);
+      color: #d5f0ff;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      cursor: pointer;
+      transition: background 150ms ease, transform 150ms ease;
+    }
+    .wng-zipper-tracker .card-action:hover {
+      background: rgba(120, 180, 255, 0.28);
+      transform: translateY(-1px);
+    }
+    .wng-zipper-tracker .lane-arrow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      color: rgba(255, 255, 255, 0.75);
+      font-size: 26px;
+      text-shadow: 0 0 6px rgba(0, 0, 0, 0.8);
+    }
+    .wng-zipper-tracker .selection {
+      background: rgba(8, 8, 8, 0.65);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .wng-zipper-tracker .section-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .wng-zipper-tracker .section-heading h4 {
+      margin: 0;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 13px;
+      color: #f7e1ff;
+    }
+    .wng-zipper-tracker .section-heading .primary {
+      background: linear-gradient(90deg, rgba(213, 58, 74, 0.85), rgba(220, 96, 48, 0.85));
+      border: 1px solid rgba(255, 170, 120, 0.5);
+      color: #fff5f1;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 11px;
+      padding: 5px 12px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: transform 150ms ease, filter 150ms ease;
+    }
+    .wng-zipper-tracker .section-heading .primary:hover:not([disabled]) {
+      transform: translateY(-1px);
+      filter: brightness(1.05);
+    }
+    .wng-zipper-tracker .section-heading .primary[disabled] {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .wng-zipper-tracker .divider {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.6);
+    }
+    .wng-zipper-tracker .divider::before,
+    .wng-zipper-tracker .divider::after {
+      content: "";
+      flex: 1 1 auto;
+      height: 1px;
+      background: linear-gradient(90deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0) 100%);
+    }
+    .wng-zipper-tracker .divider::before {
+      background: linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.12) 100%);
+    }
+    .wng-zipper-tracker .candidate-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .wng-zipper-tracker .candidate-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      background: rgba(18, 18, 18, 0.85);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      transition: border-color 150ms ease, box-shadow 150ms ease;
+    }
+    .wng-zipper-tracker .candidate-row.is-owned {
+      border-color: rgba(120, 180, 255, 0.28);
+      box-shadow: 0 0 10px rgba(120, 180, 255, 0.18);
+    }
+    .wng-zipper-tracker .candidate-row.is-selected {
+      border-color: rgba(255, 170, 120, 0.4);
+      box-shadow: 0 0 10px rgba(255, 170, 120, 0.22);
+    }
+    .wng-zipper-tracker .candidate-portrait {
+      position: relative;
+      width: 48px;
+      height: 48px;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      cursor: default;
+      flex: 0 0 auto;
+    }
+    .wng-zipper-tracker .candidate-portrait img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .wng-zipper-tracker .candidate-portrait[data-action] {
+      cursor: pointer;
+    }
+    .wng-zipper-tracker .candidate-details {
+      flex: 1 1 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .wng-zipper-tracker .candidate-details .name {
+      font-weight: 600;
+      color: #fff;
+    }
+    .wng-zipper-tracker .candidate-actions button,
+    .wng-zipper-tracker .selection button[data-action="activate"] {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 4px;
+      color: inherit;
+      padding: 3px 8px;
+      cursor: pointer;
+      font-size: 11px;
+      transition: background 150ms ease;
+    }
+    .wng-zipper-tracker .candidate-actions button:hover,
+    .wng-zipper-tracker .selection button[data-action="activate"]:hover {
+      background: rgba(255, 255, 255, 0.16);
+    }
+    .wng-zipper-tracker .roster-columns {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+    }
+    .wng-zipper-tracker .roster-columns .column {
+      background: rgba(12, 12, 12, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 8px;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .wng-zipper-tracker .roster-columns .column h4 {
+      margin: 0;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: rgba(255, 255, 255, 0.75);
     }
     .wng-zipper-tracker ul {
       list-style: none;
@@ -56,7 +393,7 @@
       justify-content: space-between;
       gap: 6px;
       padding: 4px 0;
-      border-bottom: 1px solid rgba(255,255,255,0.06);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
     }
     .wng-zipper-tracker li:last-child {
       border-bottom: none;
@@ -71,121 +408,163 @@
       height: 26px;
       border-radius: 4px;
       object-fit: cover;
-      border: 1px solid rgba(255,255,255,0.2);
+      border: 1px solid rgba(255, 255, 255, 0.18);
     }
     .wng-zipper-tracker .combatant-info .name {
       font-weight: 600;
       color: #fff;
     }
-    .wng-zipper-tracker .combatant-info .tags {
-      display: flex;
-      gap: 4px;
-      font-size: 10px;
-      color: #ccc;
-      flex-wrap: wrap;
-    }
-    .wng-zipper-tracker .tag {
-      border: 1px solid rgba(255,255,255,0.15);
-      border-radius: 4px;
-      padding: 1px 4px;
-    }
     .wng-zipper-tracker .actions button {
       font-size: 10px;
       padding: 2px 6px;
       border-radius: 4px;
-      border: 1px solid rgba(255,255,255,0.15);
-      background: rgba(0,0,0,0.45);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      background: rgba(0, 0, 0, 0.45);
       cursor: pointer;
     }
     .wng-zipper-tracker .actions button:hover {
-      background: rgba(255,255,255,0.1);
+      background: rgba(255, 255, 255, 0.1);
     }
     .wng-zipper-tracker .empty {
-      opacity: 0.65;
+      opacity: 0.7;
       font-style: italic;
-      padding: 6px 0;
     }
-    .wng-zipper-tracker .section {
-      margin-bottom: 10px;
-    }
-    .wng-zipper-tracker .columns {
-      display: flex;
-      gap: 12px;
-      flex-wrap: wrap;
-    }
-    .wng-zipper-tracker .columns > div {
-      flex: 1 1 150px;
-      background: rgba(0,0,0,0.25);
-      padding: 6px;
-      border-radius: 4px;
-      border: 1px solid rgba(255,255,255,0.05);
-    }
-    .wng-zipper-tracker .highlight {
-      border: 1px solid rgba(255,215,0,0.5);
-      box-shadow: 0 0 4px rgba(255,215,0,0.4);
+    .wng-zipper-tracker .empty.large {
+      text-align: center;
+      padding: 16px 0;
+      font-size: 13px;
     }
     .wng-zipper-tracker .alert {
-      background: rgba(255,215,0,0.12);
-      border: 1px solid rgba(255,215,0,0.4);
-      color: #ffd700;
-      padding: 4px 6px;
-      border-radius: 4px;
-      margin-bottom: 6px;
-    }
-    .wng-zipper-tracker.is-disabled {
-      opacity: 0.75;
+      background: rgba(213, 58, 74, 0.18);
+      border: 1px solid rgba(213, 58, 74, 0.35);
+      color: #ffc4c9;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      letter-spacing: 0.04em;
     }
   </style>
-  <header>
-    <div class="side-summary">
-      <span>Priority: <strong>{{priorityLabel}}</strong></span>
-      {{#if nextSideLabel}}<span>Acting: <strong>{{nextSideLabel}}</strong></span>{{/if}}
-      {{#if upcomingSideLabel}}<span>Next: <strong>{{upcomingSideLabel}}</strong></span>{{/if}}
-    </div>
-    <div class="controls">
+  <div class="tracker-shell">
+    <header class="tracker-header">
+      <div class="round-stack">
+        {{#if roundNumber}}
+          <span class="round-pill">Round {{roundNumber}}</span>
+        {{/if}}
+        {{#if turnNumber}}
+          <span class="turn-pill">Activation {{turnNumber}}</span>
+        {{/if}}
+      </div>
+      <div class="status-badges">
+        <span class="status-pill">Priority: <strong>{{priorityLabel}}</strong></span>
+        {{#if nextSideLabel}}<span class="status-pill">Acting: <strong>{{nextSideLabel}}</strong></span>{{/if}}
+        {{#if upcomingSideLabel}}<span class="status-pill">Next: <strong>{{upcomingSideLabel}}</strong></span>{{/if}}
+      </div>
       {{#if gm}}
+      <div class="gm-controls">
         <button data-action="toggle-module">{{#if enabled}}Disable{{else}}Enable{{/if}} Zipper</button>
         <button data-action="set-priority" data-side="pc">PC Priority</button>
         <button data-action="set-priority" data-side="npc">NPC Priority</button>
+      </div>
       {{/if}}
-    </div>
-  </header>
-  {{#unless hasCombat}}
-    <div class="empty">No combat selected.</div>
-  {{else}}
-    {{#unless enabled}}
-      <div class="empty">Zipper initiative is disabled for this combat.</div>
+    </header>
+    {{#unless hasCombat}}
+      <div class="empty large">No combat selected.</div>
     {{else}}
-      {{#if roundReset}}
-        <div class="alert">All sides have acted. Waiting to begin the next round.</div>
-      {{/if}}
-      {{#if manualPending}}
-        <div class="alert">Manual activation queued.</div>
-      {{/if}}
-      {{#if currentCombatant}}
-        <div class="section columns">
-          <div class="highlight">
-            <h4>Current Activation</h4>
-            <ul>
-              <li>
-                <div class="combatant-info">
-                  <img src="{{currentCombatant.img}}" alt="{{currentCombatant.name}}">
-                  <div>
-                    <div class="name">{{currentCombatant.name}}</div>
+      {{#unless enabled}}
+        <div class="empty large">Zipper initiative is disabled for this combat.</div>
+      {{else}}
+        {{#if roundReset}}
+          <div class="alert">All sides have acted. Waiting to begin the next round.</div>
+        {{/if}}
+        {{#if manualPending}}
+          <div class="alert">Manual activation queued.</div>
+        {{/if}}
+        <section class="activation-lane">
+          <div class="combatant-card current {{#if currentCombatant.isOwner}}is-owned{{/if}} {{#unless currentCombatant}}is-empty{{/unless}}">
+            {{#if currentCombatant}}
+              <div class="portrait" {{#if currentCombatant.canEndTurn}}data-action="end-turn" data-combatant-id="{{currentCombatant.id}}"{{/if}}>
+                <img src="{{currentCombatant.img}}" alt="{{currentCombatant.name}}">
+                {{#if currentCombatant.canEndTurn}}<span class="portrait-hint">End Turn</span>{{/if}}
+              </div>
+              <div class="details">
+                <div class="label">Current Activation</div>
+                <div class="name">{{currentCombatant.name}}</div>
+                <div class="tags">
+                  <span class="tag">{{currentCombatant.statusLabel}}</span>
+                  {{#if currentCombatant.hidden}}<span class="tag">Hidden</span>{{/if}}
+                </div>
+                {{#if currentCombatant.canEndTurn}}
+                  <button class="card-action" data-action="end-turn" data-combatant-id="{{currentCombatant.id}}">End Turn</button>
+                {{/if}}
+              </div>
+            {{else}}
+              <div class="empty">Waiting for activation.</div>
+            {{/if}}
+          </div>
+          <div class="lane-arrow"><span>&rsaquo;</span></div>
+          <div class="combatant-card upcoming {{#if topNextCandidate.isOwner}}is-owned{{/if}} {{#unless topNextCandidate}}is-empty{{/unless}}">
+            {{#if topNextCandidate}}
+              <div class="portrait" {{#if topNextCandidate.canActivate}}data-action="activate" data-combatant-id="{{topNextCandidate.id}}" data-side="{{topNextCandidate.side}}"{{/if}}>
+                <img src="{{topNextCandidate.img}}" alt="{{topNextCandidate.name}}">
+                {{#if topNextCandidate.canActivate}}<span class="portrait-hint">Activate</span>{{/if}}
+              </div>
+              <div class="details">
+                <div class="label">Up Next</div>
+                <div class="name">{{topNextCandidate.name}}</div>
+                <div class="tags">
+                  <span class="tag">{{topNextCandidate.statusLabel}}</span>
+                  {{#if topNextCandidate.hidden}}<span class="tag">Hidden</span>{{/if}}
+                  {{#if topNextCandidate.manualSelected}}<span class="tag">Selected</span>{{/if}}
+                </div>
+                {{#if topNextCandidate.canActivate}}
+                  <button class="card-action" data-action="activate" data-combatant-id="{{topNextCandidate.id}}" data-side="{{topNextCandidate.side}}">Activate</button>
+                {{/if}}
+              </div>
+            {{else}}
+              <div class="empty">Awaiting selection.</div>
+            {{/if}}
+          </div>
+        </section>
+        <section class="selection">
+          <div class="section-heading">
+            <h4>Select a Combatant</h4>
+            {{#if selectionAction}}
+              <button class="primary" data-action="{{selectionAction.action}}" data-combatant-id="{{selectionAction.combatantId}}" {{#unless selectionAction.enabled}}disabled{{/unless}}>{{selectionAction.label}}</button>
+            {{/if}}
+          </div>
+          <div class="divider"><span>Pending</span></div>
+          {{#if nextCandidates.length}}
+            <ul class="candidate-list">
+              {{#each nextCandidates}}
+                <li class="candidate-row{{#if isOwner}} is-owned{{/if}}{{#if manualSelected}} is-selected{{/if}}">
+                  <div class="candidate-portrait" {{#if canActivate}}data-action="activate" data-combatant-id="{{id}}" data-side="{{side}}"{{/if}}>
+                    <img src="{{img}}" alt="{{name}}">
+                  </div>
+                  <div class="candidate-details">
+                    <div class="name">{{name}}</div>
                     <div class="tags">
-                      <span class="tag">{{currentCombatant.statusLabel}}</span>
-                      {{#if currentCombatant.hidden}}<span class="tag">Hidden</span>{{/if}}
+                      <span class="tag">{{statusLabel}}</span>
+                      {{#if hidden}}<span class="tag">Hidden</span>{{/if}}
+                      {{#if manualSelected}}<span class="tag">Selected</span>{{/if}}
                     </div>
                   </div>
-                </div>
-              </li>
+                  <div class="candidate-actions">
+                    {{#if canActivate}}
+                      <button data-action="activate" data-combatant-id="{{id}}" data-side="{{side}}">Activate</button>
+                    {{/if}}
+                  </div>
+                </li>
+              {{/each}}
             </ul>
-          </div>
-          {{#if nextCandidates.length}}
-          <div>
-            <h4>Next Candidates</h4>
+          {{else}}
+            <div class="empty">No combatants pending selection.</div>
+          {{/if}}
+        </section>
+        <section class="roster-columns">
+          <div class="column">
+            <h4>Ready PCs</h4>
             <ul>
-              {{#each nextCandidates}}
+              {{#each ready.pc}}
                 <li>
                   <div class="combatant-info">
                     <img src="{{img}}" alt="{{name}}">
@@ -194,162 +573,128 @@
                       <div class="tags">
                         <span class="tag">{{statusLabel}}</span>
                         {{#if hidden}}<span class="tag">Hidden</span>{{/if}}
-                        {{#if manualSelected}}<span class="tag">Selected</span>{{/if}}
                       </div>
                     </div>
                   </div>
                   {{#if canActivate}}
                     <div class="actions">
-                      <button data-action="activate" data-combatant-id="{{id}}" data-side="{{side}}">Activate</button>
+                      <button data-action="activate" data-combatant-id="{{id}}" data-side="pc">Activate</button>
                     </div>
                   {{/if}}
                 </li>
+              {{else}}
+                <li class="empty">No ready PCs.</li>
               {{/each}}
             </ul>
           </div>
+          <div class="column">
+            <h4>Ready NPCs</h4>
+            <ul>
+              {{#each ready.npc}}
+                <li>
+                  <div class="combatant-info">
+                    <img src="{{img}}" alt="{{name}}">
+                    <div>
+                      <div class="name">{{name}}</div>
+                      <div class="tags">
+                        <span class="tag">{{statusLabel}}</span>
+                        {{#if hidden}}<span class="tag">Hidden</span>{{/if}}
+                      </div>
+                    </div>
+                  </div>
+                  {{#if canActivate}}
+                    <div class="actions">
+                      <button data-action="activate" data-combatant-id="{{id}}" data-side="npc">Activate</button>
+                    </div>
+                  {{/if}}
+                </li>
+              {{else}}
+                <li class="empty">No ready NPCs.</li>
+              {{/each}}
+            </ul>
+          </div>
+          <div class="column">
+            <h4>Spent</h4>
+            <ul>
+              {{#each spent.pc}}
+                <li>
+                  <div class="combatant-info">
+                    <img src="{{img}}" alt="{{name}}">
+                    <div>
+                      <div class="name">{{name}}</div>
+                      <div class="tags">
+                        <span class="tag">{{statusLabel}}</span>
+                        {{#if hidden}}<span class="tag">Hidden</span>{{/if}}
+                      </div>
+                    </div>
+                  </div>
+                </li>
+              {{/each}}
+              {{#each spent.npc}}
+                <li>
+                  <div class="combatant-info">
+                    <img src="{{img}}" alt="{{name}}">
+                    <div>
+                      <div class="name">{{name}}</div>
+                      <div class="tags">
+                        <span class="tag">{{statusLabel}}</span>
+                        {{#if hidden}}<span class="tag">Hidden</span>{{/if}}
+                      </div>
+                    </div>
+                  </div>
+                </li>
+              {{/each}}
+              {{#unless spent.pc.length}}
+                {{#unless spent.npc.length}}
+                  <li class="empty">No spent combatants.</li>
+                {{/unless}}
+              {{/unless}}
+            </ul>
+          </div>
+          {{#if defeated.pc.length}}
+            <div class="column">
+              <h4>Defeated PCs</h4>
+              <ul>
+                {{#each defeated.pc}}
+                  <li>
+                    <div class="combatant-info">
+                      <img src="{{img}}" alt="{{name}}">
+                      <div>
+                        <div class="name">{{name}}</div>
+                        <div class="tags">
+                          <span class="tag">Defeated</span>
+                          {{#if hidden}}<span class="tag">Hidden</span>{{/if}}
+                        </div>
+                      </div>
+                    </div>
+                  </li>
+                {{/each}}
+              </ul>
+            </div>
           {{/if}}
-        </div>
-      {{/if}}
-      <div class="section columns">
-        <div>
-          <h4>Ready PCs</h4>
-          <ul>
-            {{#each ready.pc}}
-              <li>
-                <div class="combatant-info">
-                  <img src="{{img}}" alt="{{name}}">
-                  <div>
-                    <div class="name">{{name}}</div>
-                    <div class="tags">
-                      <span class="tag">{{statusLabel}}</span>
-                      {{#if hidden}}<span class="tag">Hidden</span>{{/if}}
+          {{#if defeated.npc.length}}
+            <div class="column">
+              <h4>Defeated NPCs</h4>
+              <ul>
+                {{#each defeated.npc}}
+                  <li>
+                    <div class="combatant-info">
+                      <img src="{{img}}" alt="{{name}}">
+                      <div>
+                        <div class="name">{{name}}</div>
+                        <div class="tags">
+                          <span class="tag">Defeated</span>
+                          {{#if hidden}}<span class="tag">Hidden</span>{{/if}}
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
-                {{#if canActivate}}
-                  <div class="actions">
-                    <button data-action="activate" data-combatant-id="{{id}}" data-side="pc">Activate</button>
-                  </div>
-                {{/if}}
-              </li>
-            {{else}}
-              <li class="empty">No ready PCs.</li>
-            {{/each}}
-          </ul>
-        </div>
-        <div>
-          <h4>Ready NPCs</h4>
-          <ul>
-            {{#each ready.npc}}
-              <li>
-                <div class="combatant-info">
-                  <img src="{{img}}" alt="{{name}}">
-                  <div>
-                    <div class="name">{{name}}</div>
-                    <div class="tags">
-                      <span class="tag">{{statusLabel}}</span>
-                      {{#if hidden}}<span class="tag">Hidden</span>{{/if}}
-                    </div>
-                  </div>
-                </div>
-                {{#if canActivate}}
-                  <div class="actions">
-                    <button data-action="activate" data-combatant-id="{{id}}" data-side="npc">Activate</button>
-                  </div>
-                {{/if}}
-              </li>
-            {{else}}
-              <li class="empty">No ready NPCs.</li>
-            {{/each}}
-          </ul>
-        </div>
-      </div>
-      <div class="section columns">
-        <div>
-          <h4>Spent PCs</h4>
-          <ul>
-            {{#each spent.pc}}
-              <li>
-                <div class="combatant-info">
-                  <img src="{{img}}" alt="{{name}}">
-                  <div>
-                    <div class="name">{{name}}</div>
-                    <div class="tags">
-                      <span class="tag">{{statusLabel}}</span>
-                      {{#if hidden}}<span class="tag">Hidden</span>{{/if}}
-                    </div>
-                  </div>
-                </div>
-              </li>
-            {{else}}
-              <li class="empty">No spent PCs.</li>
-            {{/each}}
-          </ul>
-        </div>
-        <div>
-          <h4>Spent NPCs</h4>
-          <ul>
-            {{#each spent.npc}}
-              <li>
-                <div class="combatant-info">
-                  <img src="{{img}}" alt="{{name}}">
-                  <div>
-                    <div class="name">{{name}}</div>
-                    <div class="tags">
-                      <span class="tag">{{statusLabel}}</span>
-                      {{#if hidden}}<span class="tag">Hidden</span>{{/if}}
-                    </div>
-                  </div>
-                </div>
-              </li>
-            {{else}}
-              <li class="empty">No spent NPCs.</li>
-            {{/each}}
-          </ul>
-        </div>
-      </div>
-      {{#if defeated.pc.length}}
-        <div class="section">
-          <h4>Defeated PCs</h4>
-          <ul>
-            {{#each defeated.pc}}
-              <li>
-                <div class="combatant-info">
-                  <img src="{{img}}" alt="{{name}}">
-                  <div>
-                    <div class="name">{{name}}</div>
-                    <div class="tags">
-                      <span class="tag">Defeated</span>
-                      {{#if hidden}}<span class="tag">Hidden</span>{{/if}}
-                    </div>
-                  </div>
-                </div>
-              </li>
-            {{/each}}
-          </ul>
-        </div>
-      {{/if}}
-      {{#if defeated.npc.length}}
-        <div class="section">
-          <h4>Defeated NPCs</h4>
-          <ul>
-            {{#each defeated.npc}}
-              <li>
-                <div class="combatant-info">
-                  <img src="{{img}}" alt="{{name}}">
-                  <div>
-                    <div class="name">{{name}}</div>
-                    <div class="tags">
-                      <span class="tag">Defeated</span>
-                      {{#if hidden}}<span class="tag">Hidden</span>{{/if}}
-                    </div>
-                  </div>
-                </div>
-              </li>
-            {{/each}}
-          </ul>
-        </div>
+                  </li>
+                {{/each}}
+              </ul>
+            </div>
+          {{/if}}
+        </section>
       {{/if}}
     {{/if}}
-  {{/unless}}
+  </div>
 </div>
