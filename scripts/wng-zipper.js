@@ -18,10 +18,16 @@ const DOCK_DEFAULTS = {
   topOffset: 120,
   sideOffset: 16,
   width: 320,
+  height: 0,
   maxHeightBuffer: 160,
   inactiveOpacity: 0.7,
   noCombatOpacity: 0.85,
   backgroundOpacity: 0.35
+};
+
+const DOCK_SIZE_LIMITS = {
+  width: { min: 200, max: 1200 },
+  height: { min: 220, max: 2200 }
 };
 
 /* ---------------------------------------------------------
@@ -114,10 +120,18 @@ function getDockStyleConfig() {
   const top = readNumericSetting("dockTopOffset", DOCK_DEFAULTS.topOffset, { min: 0, max: 2000 });
   const side = readNumericSetting("dockSideOffset", DOCK_DEFAULTS.sideOffset, { min: 0, max: 2000 });
   const width = readNumericSetting("dockWidth", DOCK_DEFAULTS.width, { min: 200, max: 1200 });
+  let heightSetting = readNumericSetting("dockHeight", DOCK_DEFAULTS.height, { min: 0, max: 2200 });
   const buffer = readNumericSetting("dockMaxHeightBuffer", DOCK_DEFAULTS.maxHeightBuffer, { min: 0, max: 2000 });
   const inactiveOpacity = readOpacitySetting("dockInactiveOpacity", DOCK_DEFAULTS.inactiveOpacity);
   const noCombatOpacity = readOpacitySetting("dockNoCombatOpacity", DOCK_DEFAULTS.noCombatOpacity);
   const backgroundOpacity = readOpacitySetting("dockBackgroundOpacity", DOCK_DEFAULTS.backgroundOpacity);
+  if (heightSetting > 0) {
+    const viewportHeight = window?.innerHeight ?? null;
+    if (Number.isFinite(viewportHeight)) {
+      const available = clamp(viewportHeight - buffer, DOCK_SIZE_LIMITS.height.min, DOCK_SIZE_LIMITS.height.max);
+      heightSetting = clamp(heightSetting, DOCK_SIZE_LIMITS.height.min, available);
+    }
+  }
 
   return {
     anchor,
@@ -125,6 +139,7 @@ function getDockStyleConfig() {
     side: `${side}px`,
     width: `${width}px`,
     maxHeight: `calc(100vh - ${buffer}px)`,
+    height: heightSetting > 0 ? `${heightSetting}px` : null,
     inactiveOpacity: inactiveOpacity.toFixed(2),
     noCombatOpacity: noCombatOpacity.toFixed(2),
     backgroundOpacity: backgroundOpacity.toFixed(2),
@@ -370,6 +385,16 @@ Hooks.once("init", () => {
     config: true,
     type: Number,
     default: DOCK_DEFAULTS.width,
+    onChange: () => requestDockRender()
+  });
+
+  game.settings.register(MODULE_ID, "dockHeight", {
+    name: "Dock Height (px)",
+    hint: "Fixed height of the zipper dock in pixels. Set to 0 to auto-size to the viewport buffer.",
+    scope: "client",
+    config: true,
+    type: Number,
+    default: DOCK_DEFAULTS.height,
     onChange: () => requestDockRender()
   });
 
@@ -890,6 +915,199 @@ function bindDockListeners(wrapper) {
   });
 }
 
+function getViewportBounds() {
+  const doc = document.documentElement;
+  return {
+    width: window.innerWidth || doc?.clientWidth || 1920,
+    height: window.innerHeight || doc?.clientHeight || 1080
+  };
+}
+
+async function persistDockPosition(rect) {
+  const viewport = getViewportBounds();
+  const width = clamp(Math.round(rect.width), DOCK_SIZE_LIMITS.width.min, DOCK_SIZE_LIMITS.width.max);
+  const topOffset = clamp(Math.round(rect.top), 0, 2000);
+  const anchor = rect.left + rect.width / 2 >= viewport.width / 2 ? "right" : "left";
+  const sideOffset = anchor === "left"
+    ? clamp(Math.round(rect.left), 0, 2000)
+    : clamp(Math.round(viewport.width - (rect.left + rect.width)), 0, 2000);
+
+  try {
+    await Promise.all([
+      game.settings.set(MODULE_ID, "dockAnchor", anchor),
+      game.settings.set(MODULE_ID, "dockTopOffset", topOffset),
+      game.settings.set(MODULE_ID, "dockSideOffset", sideOffset),
+      game.settings.set(MODULE_ID, "dockWidth", width)
+    ]);
+  } catch (err) {
+    log(err);
+  }
+
+  requestDockRender();
+}
+
+async function persistDockSize(rect) {
+  const viewport = getViewportBounds();
+  const maxHeight = Math.min(DOCK_SIZE_LIMITS.height.max, Math.max(DOCK_SIZE_LIMITS.height.min, viewport.height - Math.max(0, rect.top)));
+  const width = clamp(Math.round(rect.width), DOCK_SIZE_LIMITS.width.min, DOCK_SIZE_LIMITS.width.max);
+  const height = clamp(Math.round(rect.height), DOCK_SIZE_LIMITS.height.min, maxHeight);
+
+  try {
+    await Promise.all([
+      game.settings.set(MODULE_ID, "dockWidth", width),
+      game.settings.set(MODULE_ID, "dockHeight", height)
+    ]);
+  } catch (err) {
+    log(err);
+  }
+
+  requestDockRender();
+}
+
+function setupDockDrag(root) {
+  const element = root.get(0);
+  if (!element) return;
+
+  const handle = root.find(".wng-zipper-tracker .tracker-header").get(0);
+  if (!handle) return;
+
+  let pointerId = null;
+  let startRect = null;
+  let startPoint = null;
+
+  const onPointerMove = (event) => {
+    if (pointerId === null || event.pointerId !== pointerId || !startRect || !startPoint) return;
+    event.preventDefault();
+
+    const viewport = getViewportBounds();
+    const dx = event.clientX - startPoint.x;
+    const dy = event.clientY - startPoint.y;
+    const nextWidth = startRect.width;
+    const nextHeight = startRect.height;
+    const maxTop = Math.max(0, viewport.height - nextHeight);
+    const maxLeft = Math.max(0, viewport.width - nextWidth);
+    const nextTop = clamp(startRect.top + dy, 0, maxTop);
+    const nextLeft = clamp(startRect.left + dx, 0, maxLeft);
+
+    element.style.top = `${Math.round(nextTop)}px`;
+    element.style.left = `${Math.round(nextLeft)}px`;
+    element.style.right = "auto";
+  };
+
+  const release = async (event) => {
+    if (pointerId === null || event.pointerId !== pointerId) return;
+
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", release);
+    window.removeEventListener("pointercancel", release);
+    element.classList.remove("is-dragging");
+
+    pointerId = null;
+    startRect = null;
+    startPoint = null;
+
+    const rect = element.getBoundingClientRect();
+    await persistDockPosition(rect);
+  };
+
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    if (event.target?.closest?.("button, [data-action], input, select, textarea, a")) return;
+
+    startRect = element.getBoundingClientRect();
+    startPoint = { x: event.clientX, y: event.clientY };
+    pointerId = event.pointerId;
+    element.classList.add("is-dragging");
+    element.style.right = "auto";
+
+    window.addEventListener("pointermove", onPointerMove, { passive: false });
+    window.addEventListener("pointerup", release, { passive: false });
+    window.addEventListener("pointercancel", release, { passive: false });
+
+    event.preventDefault();
+    event.stopPropagation();
+  }, { passive: false });
+}
+
+function setupDockResize(root) {
+  const element = root.get(0);
+  if (!element) return;
+
+  const handle = root.find("[data-dock-resize]").get(0);
+  if (!handle) return;
+
+  let pointerId = null;
+  let startRect = null;
+  let startPoint = null;
+
+  const onPointerMove = (event) => {
+    if (pointerId === null || event.pointerId !== pointerId || !startRect || !startPoint) return;
+    event.preventDefault();
+
+    const viewport = getViewportBounds();
+    const dx = event.clientX - startPoint.x;
+    const dy = event.clientY - startPoint.y;
+    const maxWidth = Math.min(DOCK_SIZE_LIMITS.width.max, Math.max(DOCK_SIZE_LIMITS.width.min, viewport.width - Math.max(0, startRect.left)));
+    const maxHeight = Math.min(DOCK_SIZE_LIMITS.height.max, Math.max(DOCK_SIZE_LIMITS.height.min, viewport.height - Math.max(0, startRect.top)));
+    const width = clamp(startRect.width + dx, DOCK_SIZE_LIMITS.width.min, maxWidth);
+    const height = clamp(startRect.height + dy, DOCK_SIZE_LIMITS.height.min, maxHeight);
+
+    element.style.width = `${Math.round(width)}px`;
+    element.style.height = `${Math.round(height)}px`;
+  };
+
+  const release = async (event) => {
+    if (pointerId === null || event.pointerId !== pointerId) return;
+
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", release);
+    window.removeEventListener("pointercancel", release);
+    element.classList.remove("is-resizing");
+
+    pointerId = null;
+    startRect = null;
+    startPoint = null;
+
+    const rect = element.getBoundingClientRect();
+    await persistDockSize(rect);
+  };
+
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+
+    startRect = element.getBoundingClientRect();
+    startPoint = { x: event.clientX, y: event.clientY };
+    pointerId = event.pointerId;
+    element.classList.add("is-resizing");
+    element.style.right = "auto";
+
+    window.addEventListener("pointermove", onPointerMove, { passive: false });
+    window.addEventListener("pointerup", release, { passive: false });
+    window.addEventListener("pointercancel", release, { passive: false });
+
+    event.preventDefault();
+    event.stopPropagation();
+  }, { passive: false });
+
+  handle.addEventListener("dblclick", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    try {
+      await game.settings.set(MODULE_ID, "dockHeight", 0);
+    } catch (err) {
+      log(err);
+    }
+
+    requestDockRender();
+  });
+}
+
+function enableDockInteractivity(root) {
+  setupDockDrag(root);
+  setupDockResize(root);
+}
+
 function ensureDockRoot() {
   let root = document.getElementById(DOCK_ROOT_ID);
   if (!root) {
@@ -910,6 +1128,7 @@ async function renderStandaloneDock() {
   const rendered = await foundry.applications.handlebars.renderTemplate(templatePath, context);
   root.html(`<div class="${DOCK_WRAPPER_CLASS}">${rendered}</div>`);
   bindDockListeners(root);
+  enableDockInteractivity(root);
   root.toggleClass("is-active", !!context.enabled);
   root.toggleClass("has-combat", !!context.hasCombat);
 }
