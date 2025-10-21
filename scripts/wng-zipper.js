@@ -1131,6 +1131,7 @@ async function renderStandaloneDock() {
   enableDockInteractivity(root);
   root.toggleClass("is-active", !!context.enabled);
   root.toggleClass("has-combat", !!context.hasCombat);
+  root.toggleClass("is-hidden", !context.hasCombat);
 }
 
 let dockRenderPending = false;
