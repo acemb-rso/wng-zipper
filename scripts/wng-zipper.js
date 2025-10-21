@@ -31,15 +31,108 @@ const DOCK_SIZE_LIMITS = {
   height: { min: 220, max: 2200 }
 };
 
+const DOCK_OVERRIDE_STORAGE_KEY = `${MODULE_ID}.dockOverrides`;
+
 const SOCKET_EVENT = `module.${MODULE_ID}`;
 const SOCKET_TIMEOUT_MS = 8000;
 const pendingSocketRequests = new Map();
 let socketBridgeInitialized = false;
+let socketBridgeRetryTimer = null;
+let dockOverrideCache = null;
 
 /* ---------------------------------------------------------
  * Utility helpers
  * --------------------------------------------------------- */
 const log = (...args) => console.log(`[%c${MODULE_ID}%c]`, "color:#2ea043", "color:inherit", ...args);
+
+function accessLocalStorage() {
+  try {
+    return globalThis?.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function readDockOverrideStorage() {
+  const storage = accessLocalStorage();
+  if (!storage) return {};
+  try {
+    const raw = storage.getItem(DOCK_OVERRIDE_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") return parsed;
+  } catch (err) {
+    log(err);
+  }
+  return {};
+}
+
+function writeDockOverrideStorage(data) {
+  const storage = accessLocalStorage();
+  if (!storage) return;
+  try {
+    if (!data || !Object.keys(data).length) {
+      storage.removeItem(DOCK_OVERRIDE_STORAGE_KEY);
+    } else {
+      storage.setItem(DOCK_OVERRIDE_STORAGE_KEY, JSON.stringify(data));
+    }
+  } catch (err) {
+    log(err);
+  }
+}
+
+function getDockOverrides() {
+  if (!dockOverrideCache) {
+    dockOverrideCache = readDockOverrideStorage();
+  }
+  return { ...(dockOverrideCache ?? {}) };
+}
+
+function updateDockOverrides(partial = {}) {
+  if (!partial || typeof partial !== "object") return getDockOverrides();
+  const current = getDockOverrides();
+  let changed = false;
+  for (const [key, value] of Object.entries(partial)) {
+    if (value === undefined) continue;
+    if (value === null) {
+      if (key in current) {
+        delete current[key];
+        changed = true;
+      }
+      continue;
+    }
+    if (current[key] !== value) {
+      current[key] = value;
+      changed = true;
+    }
+  }
+  if (changed) {
+    dockOverrideCache = current;
+    writeDockOverrideStorage(current);
+  }
+  return { ...current };
+}
+
+function clearDockOverrides(keys = null) {
+  if (keys === null) {
+    dockOverrideCache = {};
+    writeDockOverrideStorage({});
+    return;
+  }
+  const list = Array.isArray(keys) ? keys : [keys];
+  const current = getDockOverrides();
+  let changed = false;
+  for (const key of list) {
+    if (key in current) {
+      delete current[key];
+      changed = true;
+    }
+  }
+  if (changed) {
+    dockOverrideCache = current;
+    writeDockOverrideStorage(current);
+  }
+}
 const isPC = (c) => {
   try {
     if (!c) return false;
@@ -157,6 +250,7 @@ async function processSocketAction(action, data = {}) {
 }
 
 async function sendSocketRequest(action, data = {}, { timeout = SOCKET_TIMEOUT_MS } = {}) {
+  if (!socketBridgeInitialized) registerSocketBridge();
   if (game.user.isGM) {
     return processSocketAction(action, data);
   }
@@ -181,10 +275,23 @@ async function sendSocketRequest(action, data = {}, { timeout = SOCKET_TIMEOUT_M
 
 function registerSocketBridge() {
   if (socketBridgeInitialized) return;
-  socketBridgeInitialized = true;
-  if (!game.socket) return;
 
-  game.socket.on(SOCKET_EVENT, async (payload = {}) => {
+  const socket = game.socket;
+  if (!socket) {
+    if (socketBridgeRetryTimer === null) {
+      const delay = Math.max(100, Math.min(2000, SOCKET_TIMEOUT_MS / 4));
+      socketBridgeRetryTimer = (globalThis.setTimeout ?? setTimeout)(() => {
+        socketBridgeRetryTimer = null;
+        registerSocketBridge();
+      }, delay);
+    }
+    return;
+  }
+
+  socketBridgeInitialized = true;
+  socketBridgeRetryTimer = null;
+
+  socket.on(SOCKET_EVENT, async (payload = {}) => {
     if (payload?.response) {
       handleSocketResponse(payload);
       return;
@@ -196,7 +303,7 @@ function registerSocketBridge() {
     try {
       const result = await processSocketAction(payload.action, payload.data ?? {});
       if (requestId) {
-        game.socket.emit(SOCKET_EVENT, {
+        socket.emit(SOCKET_EVENT, {
           response: true,
           requestId,
           success: true,
@@ -205,7 +312,7 @@ function registerSocketBridge() {
       }
     } catch (err) {
       if (requestId) {
-        game.socket.emit(SOCKET_EVENT, {
+        socket.emit(SOCKET_EVENT, {
           response: true,
           requestId,
           success: false,
@@ -348,15 +455,35 @@ function readOpacitySetting(key, fallback) {
 
 function getDockStyleConfig() {
   const anchorSetting = game.settings.get(MODULE_ID, "dockAnchor") ?? DOCK_DEFAULTS.anchor;
-  const anchor = anchorSetting === "left" ? "left" : "right";
-  const top = readNumericSetting("dockTopOffset", DOCK_DEFAULTS.topOffset, { min: 0, max: 2000 });
-  const side = readNumericSetting("dockSideOffset", DOCK_DEFAULTS.sideOffset, { min: 0, max: 2000 });
-  const width = readNumericSetting("dockWidth", DOCK_DEFAULTS.width, { min: 200, max: 1200 });
-  let heightSetting = readNumericSetting("dockHeight", DOCK_DEFAULTS.height, { min: 0, max: 2200 });
+  let anchor = anchorSetting === "left" ? "left" : "right";
+  let topOffset = readNumericSetting("dockTopOffset", DOCK_DEFAULTS.topOffset, { min: 0, max: 2000 });
+  let sideOffset = readNumericSetting("dockSideOffset", DOCK_DEFAULTS.sideOffset, { min: 0, max: 2000 });
+  let width = readNumericSetting("dockWidth", DOCK_DEFAULTS.width, { min: DOCK_SIZE_LIMITS.width.min, max: DOCK_SIZE_LIMITS.width.max });
+  let heightSetting = readNumericSetting("dockHeight", DOCK_DEFAULTS.height, { min: 0, max: DOCK_SIZE_LIMITS.height.max });
   const buffer = readNumericSetting("dockMaxHeightBuffer", DOCK_DEFAULTS.maxHeightBuffer, { min: 0, max: 2000 });
   const inactiveOpacity = readOpacitySetting("dockInactiveOpacity", DOCK_DEFAULTS.inactiveOpacity);
   const noCombatOpacity = readOpacitySetting("dockNoCombatOpacity", DOCK_DEFAULTS.noCombatOpacity);
   const backgroundOpacity = readOpacitySetting("dockBackgroundOpacity", DOCK_DEFAULTS.backgroundOpacity);
+  const overrides = getDockOverrides();
+
+  if (overrides.anchor === "left" || overrides.anchor === "right") {
+    anchor = overrides.anchor;
+  }
+  if (Number.isFinite(overrides.top)) {
+    topOffset = clamp(overrides.top, 0, 2000);
+  }
+  if (Number.isFinite(overrides.side)) {
+    sideOffset = clamp(overrides.side, 0, 2000);
+  }
+  if (Number.isFinite(overrides.width)) {
+    width = clamp(overrides.width, DOCK_SIZE_LIMITS.width.min, DOCK_SIZE_LIMITS.width.max);
+  }
+  if (overrides.height === 0) {
+    heightSetting = 0;
+  } else if (Number.isFinite(overrides.height)) {
+    heightSetting = clamp(overrides.height, DOCK_SIZE_LIMITS.height.min, DOCK_SIZE_LIMITS.height.max);
+  }
+
   if (heightSetting > 0) {
     const viewportHeight = window?.innerHeight ?? null;
     if (Number.isFinite(viewportHeight)) {
@@ -367,8 +494,8 @@ function getDockStyleConfig() {
 
   return {
     anchor,
-    top: `${top}px`,
-    side: `${side}px`,
+    top: `${topOffset}px`,
+    side: `${sideOffset}px`,
     width: `${width}px`,
     maxHeight: `calc(100vh - ${buffer}px)`,
     height: heightSetting > 0 ? `${heightSetting}px` : null,
@@ -1356,6 +1483,7 @@ async function persistDockPosition(rect) {
     ? clamp(Math.round(rect.left), 0, 2000)
     : clamp(Math.round(viewport.width - (rect.left + rect.width)), 0, 2000);
 
+  let saved = false;
   try {
     await Promise.all([
       game.settings.set(MODULE_ID, "dockAnchor", anchor),
@@ -1363,8 +1491,15 @@ async function persistDockPosition(rect) {
       game.settings.set(MODULE_ID, "dockSideOffset", sideOffset),
       game.settings.set(MODULE_ID, "dockWidth", width)
     ]);
+    saved = true;
   } catch (err) {
     log(err);
+  }
+
+  if (saved) {
+    clearDockOverrides(["anchor", "top", "side", "width"]);
+  } else {
+    updateDockOverrides({ anchor, top: topOffset, side: sideOffset, width });
   }
 
   requestDockRender();
@@ -1376,13 +1511,21 @@ async function persistDockSize(rect) {
   const width = clamp(Math.round(rect.width), DOCK_SIZE_LIMITS.width.min, DOCK_SIZE_LIMITS.width.max);
   const height = clamp(Math.round(rect.height), DOCK_SIZE_LIMITS.height.min, maxHeight);
 
+  let saved = false;
   try {
     await Promise.all([
       game.settings.set(MODULE_ID, "dockWidth", width),
       game.settings.set(MODULE_ID, "dockHeight", height)
     ]);
+    saved = true;
   } catch (err) {
     log(err);
+  }
+
+  if (saved) {
+    clearDockOverrides(["width", "height"]);
+  } else {
+    updateDockOverrides({ width, height });
   }
 
   requestDockRender();
@@ -1525,10 +1668,18 @@ function setupDockResize(root) {
     event.preventDefault();
     event.stopPropagation();
 
+    let saved = false;
     try {
       await game.settings.set(MODULE_ID, "dockHeight", 0);
+      saved = true;
     } catch (err) {
       log(err);
+    }
+
+    if (saved) {
+      clearDockOverrides(["height"]);
+    } else {
+      updateDockOverrides({ height: 0 });
     }
 
     requestDockRender();
