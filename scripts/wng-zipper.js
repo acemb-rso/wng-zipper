@@ -828,7 +828,7 @@ async function renderStandaloneDock() {
   const context = await buildDockContext(combat);
   const modulePath = game.modules.get(MODULE_ID)?.path ?? `modules/${MODULE_ID}`;
   const templatePath = `${modulePath}/${DOCK_TEMPLATE}`.replace(/\/+/g, "/");
-  const rendered = await renderTemplate(templatePath, context);
+  const rendered = await foundry.applications.handlebars.renderTemplate(templatePath, context);
   root.html(`<div class="${DOCK_WRAPPER_CLASS}">${rendered}</div>`);
   bindDockListeners(root);
   root.toggleClass("is-active", !!context.enabled);
