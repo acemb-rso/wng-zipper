@@ -56,6 +56,9 @@ const formatStatusLabel = (status, entry) => {
 
 const sanitizeEntry = (entry, manualId) => {
   const statusLabel = formatStatusLabel(entry.status, entry);
+  const doc = entry?.doc;
+  const actor = doc?.actor;
+  const isOwner = doc?.isOwner ?? actor?.isOwner ?? false;
   return {
     id: entry.id,
     name: entry.name,
@@ -69,7 +72,8 @@ const sanitizeEntry = (entry, manualId) => {
     status: entry.status,
     statusLabel,
     hidden: entry.hidden,
-    manualSelected: !!manualId && entry.id === manualId
+    manualSelected: !!manualId && entry.id === manualId,
+    isOwner
   };
 };
 
@@ -732,7 +736,11 @@ async function buildDockContext(combat) {
     allowPlayers: game.settings.get(MODULE_ID, "playersCanAdvance"),
     combatId: combat?.id ?? null,
     nextSide: null,
-    dockStyles
+    dockStyles,
+    selectionAction: null,
+    topNextCandidate: null,
+    roundNumber: combat?.round ?? 0,
+    turnNumber: Number.isFinite(combat?.turn) ? combat.turn + 1 : null
   };
 
   if (!combat) return base;
@@ -745,13 +753,66 @@ async function buildDockContext(combat) {
   const ready = cloneDisplayGroup(plan.display.ready);
   const spent = cloneDisplayGroup(plan.display.spent);
   const defeated = cloneDisplayGroup(plan.display.defeated);
-  const nextCandidates = (plan.display.nextCandidates ?? []).map((entry) => ({
-    ...entry,
-    canActivate: entry.canActivate ?? canActivateEntry(entry, effectiveNextSide, plan.allowPlayers)
-  }));
+  const rawCandidates = plan.display.nextCandidates ?? [];
+  const nextCandidates = rawCandidates.map((entry) => {
+    const doc = combat.combatants?.get(entry.id) ?? null;
+    const actor = doc?.actor ?? null;
+    const isOwner = entry.isOwner ?? doc?.isOwner ?? actor?.isOwner ?? false;
+    return {
+      ...entry,
+      isOwner,
+      canActivate: entry.canActivate ?? canActivateEntry(entry, effectiveNextSide, plan.allowPlayers)
+    };
+  });
 
-  const canSelectPC = plan.enabled && canActivateEntry({ side: "pc" }, effectiveNextSide, plan.allowPlayers);
-  const canSelectNPC = plan.enabled && canActivateEntry({ side: "npc" }, effectiveNextSide, plan.allowPlayers);
+  let currentCombatant = plan.display.current ? { ...plan.display.current } : null;
+  if (currentCombatant) {
+    const doc = combat.combatants?.get(currentCombatant.id) ?? null;
+    const actor = doc?.actor ?? null;
+    const isOwner = currentCombatant.isOwner ?? doc?.isOwner ?? actor?.isOwner ?? false;
+    currentCombatant = {
+      ...currentCombatant,
+      isOwner
+    };
+  }
+
+  const allowPlayers = plan.allowPlayers;
+  const canSelectPC = plan.enabled && canActivateEntry({ side: "pc" }, effectiveNextSide, allowPlayers);
+  const canSelectNPC = plan.enabled && canActivateEntry({ side: "npc" }, effectiveNextSide, allowPlayers);
+  const canEndTurn = plan.enabled && !!currentCombatant && (game.user.isGM || (currentCombatant.side === "pc" && allowPlayers && currentCombatant.isOwner));
+  if (currentCombatant) {
+    currentCombatant = {
+      ...currentCombatant,
+      canEndTurn
+    };
+  }
+
+  const preferredCandidate = nextCandidates.find((entry) => entry.canActivate && (game.user.isGM || entry.isOwner))
+    ?? nextCandidates.find((entry) => entry.canActivate)
+    ?? null;
+
+  const selectionAction = (() => {
+    if (!plan.enabled) return null;
+    if (canEndTurn && currentCombatant) {
+      return {
+        action: "end-turn",
+        label: "End Turn",
+        combatantId: currentCombatant.id,
+        enabled: true
+      };
+    }
+    if (preferredCandidate) {
+      return {
+        action: "activate",
+        label: "Activate",
+        combatantId: preferredCandidate.id,
+        enabled: preferredCandidate.canActivate
+      };
+    }
+    return null;
+  })();
+
+  const topNextCandidate = nextCandidates[0] ?? null;
 
   return {
     gm,
@@ -762,28 +823,32 @@ async function buildDockContext(combat) {
     upcomingSideLabel,
     roundReset: plan.roundReset,
     manualPending: !!plan.state.manualChoiceId && !plan.manualUsed,
-    currentCombatant: plan.display.current ?? null,
+    currentCombatant,
     nextCandidates,
+    topNextCandidate,
     ready,
     spent,
     defeated,
     canSelectPC,
     canSelectNPC,
-    allowPlayers: plan.allowPlayers,
+    allowPlayers,
+    selectionAction,
     combatId: combat.id,
     nextSide: effectiveNextSide,
-    dockStyles
+    dockStyles,
+    roundNumber: combat.round ?? 0,
+    turnNumber: Number.isFinite(combat.turn) ? combat.turn + 1 : null
   };
 }
 
 function bindDockListeners(wrapper) {
   wrapper.off("click.wng-zipper");
-  wrapper.on("click.wng-zipper", "button[data-action]", async (event) => {
+  wrapper.on("click.wng-zipper", "[data-action]", async (event) => {
     event.preventDefault();
     event.stopPropagation();
 
-    const button = event.currentTarget;
-    const action = button.dataset.action;
+    const target = event.currentTarget;
+    const action = target.dataset.action;
     const combat = game.combat;
     if (!combat) {
       ui.notifications.warn("No active combat to control.");
@@ -796,10 +861,13 @@ function bindDockListeners(wrapper) {
           await handleToggleZipper(combat);
           break;
         case "set-priority":
-          await handleSetPriority(combat, button.dataset.side);
+          await handleSetPriority(combat, target.dataset.side);
           break;
         case "activate":
-          await handleManualActivation(combat, button.dataset.combatantId);
+          await handleManualActivation(combat, target.dataset.combatantId);
+          break;
+        case "end-turn":
+          await handleEndTurn(combat, target.dataset.combatantId);
           break;
         default:
           break;
@@ -885,6 +953,39 @@ async function handleManualActivation(combat, combatantId) {
   }
 
   await combat.setFlag(MODULE_ID, MANUAL_CHOICE_FLAG, combatantId);
+  await combat.nextTurn();
+  ui.combat.render(true);
+  requestDockRender();
+}
+
+async function handleEndTurn(combat, combatantId) {
+  if (!(await combat.getFlag(MODULE_ID, "enabled"))) {
+    await combat.nextTurn();
+    ui.combat.render(true);
+    requestDockRender();
+    return;
+  }
+
+  const current = combat.combatant;
+  if (!current) {
+    ui.notifications.warn("There is no active combatant to end.");
+    return;
+  }
+
+  if (combatantId && current.id !== combatantId && !game.user.isGM) {
+    ui.notifications.warn("You cannot control that combatant.");
+    return;
+  }
+
+  const allowPlayers = game.settings.get(MODULE_ID, "playersCanAdvance");
+  const currentIsPC = isPC(current);
+  const currentIsOwner = current.isOwner ?? current.actor?.isOwner ?? false;
+
+  if (!game.user.isGM && !(allowPlayers && currentIsPC && currentIsOwner)) {
+    ui.notifications.warn("You cannot end this activation.");
+    return;
+  }
+
   await combat.nextTurn();
   ui.combat.render(true);
   requestDockRender();
