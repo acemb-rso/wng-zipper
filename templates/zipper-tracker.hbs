@@ -12,12 +12,18 @@
       {{/if}}
       width: {{dockStyles.width}};
       max-height: {{dockStyles.maxHeight}};
-      overflow-y: auto;
+      {{#if dockStyles.height}}
+      height: {{dockStyles.height}};
+      {{/if}}
+      overflow: hidden;
       z-index: 60;
-      pointer-events: none;
+      pointer-events: auto;
     }
     #wng-zipper-dock .wng-zipper-tracker-container {
       pointer-events: auto;
+      position: relative;
+      height: 100%;
+      overflow: hidden;
     }
     #wng-zipper-dock:not(.is-active) .wng-zipper-tracker {
       opacity: {{dockStyles.inactiveOpacity}};
@@ -35,6 +41,10 @@
       font-size: 12px;
       box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
       backdrop-filter: blur(2px);
+      display: flex;
+      flex-direction: column;
+      height: calc(100% - 18px);
+      box-sizing: border-box;
     }
     .wng-zipper-tracker.is-disabled {
       opacity: 0.7;
@@ -43,6 +53,10 @@
       display: flex;
       flex-direction: column;
       gap: 12px;
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: auto;
+      padding-bottom: 12px;
     }
     .wng-zipper-tracker header.tracker-header {
       display: flex;
@@ -51,6 +65,12 @@
       gap: 10px;
       padding-bottom: 8px;
       border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      cursor: move;
+      user-select: none;
+      touch-action: none;
+    }
+    .wng-zipper-dock-root.is-dragging .wng-zipper-tracker header.tracker-header {
+      cursor: grabbing;
     }
     .wng-zipper-tracker .round-stack {
       display: flex;
@@ -434,6 +454,34 @@
       padding: 16px 0;
       font-size: 13px;
     }
+    .wng-zipper-resize-handle {
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      right: 6px;
+      bottom: 6px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.18);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      cursor: nwse-resize;
+      opacity: 0.65;
+      transition: opacity 150ms ease;
+      pointer-events: auto;
+      touch-action: none;
+    }
+    .wng-zipper-resize-handle::after {
+      content: "";
+      position: absolute;
+      inset: 3px;
+      background: linear-gradient(135deg, rgba(0, 0, 0, 0.15) 0%, rgba(0, 0, 0, 0.6) 100%);
+      border-radius: 3px;
+    }
+    .wng-zipper-resize-handle:hover {
+      opacity: 1;
+    }
+    #wng-zipper-dock.is-resizing .wng-zipper-resize-handle {
+      opacity: 1;
+    }
     .wng-zipper-tracker .alert {
       background: rgba(213, 58, 74, 0.18);
       border: 1px solid rgba(213, 58, 74, 0.35);
@@ -698,4 +746,5 @@
       {{/unless}}
     </div>
   </div>
+  <div class="wng-zipper-resize-handle" data-dock-resize title="Drag to resize"></div>
 </div>
