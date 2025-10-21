@@ -246,10 +246,26 @@ async function evaluateZipperState(combat, opts = {}) {
   const pcAvail = available("pc", acted);
   const npcAvail = available("npc", acted);
 
-  let nextSide = plan.state.currentSide || plan.state.startingSide;
+  const previousSide = forceStart ? null : plan.state.currentSide;
   let options = [];
   let choice = null;
   let manualEntry = entries.find(e => e.id === plan.state.manualChoiceId && !e.isDefeated && !acted.has(e.id));
+
+  if (manualEntry) {
+    const pool = manualEntry.side === "pc" ? pcAvail : npcAvail;
+    if (!pool.some((e) => e.id === manualEntry.id)) {
+      manualEntry = null;
+    }
+  }
+
+  const resolveNextSide = () => {
+    if (manualEntry) return manualEntry.side;
+    if (previousSide === "pc") return "npc";
+    if (previousSide === "npc") return "pc";
+    return plan.state.startingSide;
+  };
+
+  let nextSide = resolveNextSide();
 
   if (!pcAvail.length && !npcAvail.length) {
     plan.roundReset = true;
@@ -633,10 +649,8 @@ async function computeNextZipperCombatant(combat, opts = {}) {
   const manualId = await combat.getFlag(MODULE_ID, MANUAL_CHOICE_FLAG);
   const acted = new Set(await combat.getFlag(MODULE_ID, "actedIds") ?? []);
   if (opts.forceStartOfRound) acted.clear();
-  let currentSide = await combat.getFlag(MODULE_ID, "currentSide");
   const startingSide = await combat.getFlag(MODULE_ID, "startingSide") ?? "pc";
   const previousSide = opts.forceStartOfRound ? null : await combat.getFlag(MODULE_ID, "currentSide");
-  let nextSide = previousSide || startingSide;
 
   const aliveAvailOfSide = (side) => turns.filter((c) => {
     const defeated = c.isDefeated ?? c.defeated ?? false;
@@ -661,8 +675,21 @@ async function computeNextZipperCombatant(combat, opts = {}) {
   }
 
   if (manualEntry) {
-    nextSide = isPC(manualEntry) ? "pc" : "npc";
+    const pool = isPC(manualEntry) ? pcAvail : npcAvail;
+    if (!pool.some((c) => c.id === manualEntry.id)) {
+      manualEntry = null;
+      await combat.unsetFlag(MODULE_ID, MANUAL_CHOICE_FLAG);
+    }
   }
+
+  const resolveNextSide = () => {
+    if (manualEntry) return isPC(manualEntry) ? "pc" : "npc";
+    if (previousSide === "pc") return "npc";
+    if (previousSide === "npc") return "pc";
+    return startingSide;
+  };
+
+  let nextSide = resolveNextSide();
 
   if (!pcAvail.length && !npcAvail.length) {
     await combat.setFlag(MODULE_ID, "actedIds", []);
