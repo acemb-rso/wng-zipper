@@ -90,6 +90,7 @@ const sanitizeEntry = (entry, selectedId) => {
 };
 
 const emptyQueue = () => ({ pc: null, npc: null });
+const queuePromptBypass = new Set();
 
 const cloneQueueState = (queue) => ({
   pc: typeof queue?.pc === "string" && queue.pc.length ? queue.pc : null,
@@ -303,9 +304,9 @@ const canQueueEntry = (entry, nextSide, currentSide, allowPlayers) => {
   if (!entry) return false;
   if (entry.isDefeated) return false;
   if (entry.acted || entry.isComplete) return false;
+  if (entry.isCurrent) return false;
 
   const side = entry.side;
-  if (currentSide && side === currentSide) return false;
 
   if (side === "npc") {
     return game.user.isGM;
@@ -315,7 +316,6 @@ const canQueueEntry = (entry, nextSide, currentSide, allowPlayers) => {
     if (game.user.isGM) return true;
     if (!allowPlayers) return false;
     if (!entry.isOwner) return false;
-    if (currentSide && currentSide !== "npc") return false;
     return true;
   }
 
@@ -854,6 +854,13 @@ Hooks.once("ready", async () => {
 
   wrap(C, "nextTurn", async function (original, ...args) {
     if (!(await this.getFlag(MODULE_ID, "enabled"))) return original(...args);
+    const current = this.combatant ?? null;
+    if (queuePromptBypass.has(this.id)) {
+      queuePromptBypass.delete(this.id);
+    } else {
+      const outcome = await maybePromptForNextPcQueue(this, { actingCombatant: current });
+      if (outcome.cancelled) return this;
+    }
     const nextCombatant = await computeNextZipperCombatant(this);
     if (!nextCombatant) return original(...args);
 
@@ -975,12 +982,7 @@ async function computeNextZipperCombatant(combat, opts = {}) {
     queue[nextSide] = null;
     queueChanged = true;
   } else if (candidates.length) {
-    if (nextSide === "pc" && candidates.length > 1) {
-      const selection = await selectPCDialog(candidates);
-      chosen = selection ?? candidates[0];
-    } else {
-      chosen = candidates[0];
-    }
+    chosen = candidates[0];
   } else if (queuedCandidate) {
     chosen = queuedCandidate;
     queue[nextSide] = null;
@@ -1001,43 +1003,6 @@ async function computeNextZipperCombatant(combat, opts = {}) {
   return chosen;
 }
 
-/* ---------------------------------------------------------
- * Dialog for selecting next PC
- * --------------------------------------------------------- */
-async function selectPCDialog(candidates) {
-  const canPlayers = game.settings.get(MODULE_ID, "playersCanAdvance");
-  if (!canPlayers && !game.user.isGM) {
-    ui.notifications.warn("Only the GM may choose the next PC.");
-    return null;
-  }
-
-  const choices = candidates.map((c, idx) => `
-    <label style="display:flex;align-items:center;gap:6px;margin:4px 0;">
-      <input type="radio" name="pcChoice" value="${c.id}" ${idx === 0 ? "checked" : ""}>
-      <img src="${c.token?.texture?.src || c.img}" width="28" height="28" style="object-fit:cover;border-radius:4px;">
-      ${c.name}
-    </label>`).join("");
-
-  return new Promise(resolve => {
-    new Dialog({
-      title: "Choose Next PC",
-      content: `<form>${choices}</form>`,
-      buttons: {
-        ok: {
-          label: "Activate",
-          callback: (html) => {
-            const id = html[0].querySelector('input[name="pcChoice"]:checked')?.value;
-            const sel = candidates.find(c => c.id === id) || candidates[0];
-            resolve(sel);
-          }
-        }
-      },
-      default: "ok",
-      close: () => resolve(null)
-    }).render(true);
-  });
-}
-
 async function promptNextPcQueueDialog(candidates, { preselectedId = null, allowSkip = true } = {}) {
   const hasOptions = Array.isArray(candidates) && candidates.length > 0;
   const content = hasOptions
@@ -1045,10 +1010,11 @@ async function promptNextPcQueueDialog(candidates, { preselectedId = null, allow
        <form class="wng-zipper-queue-form">
          ${candidates.map((c, idx) => {
            const checked = (preselectedId && c.id === preselectedId) || (!preselectedId && idx === 0);
+           const img = c.img || "icons/svg/mystery-man.svg";
            return `
              <label style="display:flex;align-items:center;gap:8px;margin:6px 0;">
                <input type="radio" name="pcQueueChoice" value="${c.id}" ${checked ? "checked" : ""}>
-               <img src="${c.img}" width="32" height="32" style="object-fit:cover;border-radius:4px;">
+               <img src="${img}" width="32" height="32" style="object-fit:cover;border-radius:4px;">
                <span>${c.name}</span>
              </label>
            `;
@@ -1100,6 +1066,58 @@ async function promptNextPcQueueDialog(candidates, { preselectedId = null, allow
       }
     }).render(true);
   });
+}
+
+async function maybePromptForNextPcQueue(combat, { actingCombatant = null } = {}) {
+  if (!combat) return { cancelled: false, prompted: false };
+  if (!(await combat.getFlag(MODULE_ID, "enabled"))) return { cancelled: false, prompted: false };
+
+  const current = actingCombatant ?? combat.combatant ?? null;
+  if (!current || !isPC(current)) return { cancelled: false, prompted: false };
+
+  const allowPlayers = game.settings.get(MODULE_ID, "playersCanAdvance");
+  const isOwner = current.isOwner ?? current.actor?.isOwner ?? false;
+  if (!game.user.isGM && !(allowPlayers && isOwner)) return { cancelled: false, prompted: false };
+
+  const plan = await evaluateZipperState(combat, { preview: true });
+  const actedSet = new Set(plan.state.actedIds ?? []);
+  if (current.id) actedSet.add(current.id);
+
+  const queueState = plan.state.queue ?? emptyQueue();
+  const candidates = plan.entries.filter((entry) => {
+    if (entry.side !== "pc") return false;
+    if (entry.id === current.id) return false;
+    if (entry.isDefeated) return false;
+    if (entry.isComplete) return false;
+    if (entry.acted) return false;
+    if (actedSet.has(entry.id)) return false;
+    return true;
+  });
+
+  const visible = candidates.filter((entry) => {
+    if (!entry.hidden) return true;
+    if (game.user.isGM) return true;
+    try {
+      const doc = combat.combatants?.get(entry.id) ?? entry.doc ?? null;
+      const actor = doc?.actor ?? null;
+      return doc?.isOwner ?? actor?.isOwner ?? false;
+    } catch {
+      return false;
+    }
+  });
+  const sanitized = visible.map((entry) => sanitizeEntry(entry, queueState.pc));
+
+  const result = await promptNextPcQueueDialog(sanitized, {
+    preselectedId: queueState.pc ?? null,
+    allowSkip: true
+  });
+
+  if (!result || result.cancelled) {
+    return { cancelled: true, prompted: true };
+  }
+
+  await updateQueuedChoice(combat, "pc", result.combatantId ?? null);
+  return { cancelled: false, prompted: true };
 }
 
 /* ---------------------------------------------------------
@@ -1470,9 +1488,14 @@ function setupDockResize(root) {
     window.removeEventListener("pointercancel", release);
     element.classList.remove("is-resizing");
 
+    const capturedId = pointerId;
     pointerId = null;
     startRect = null;
     startPoint = null;
+
+    if (typeof handle.releasePointerCapture === "function" && capturedId !== null) {
+      try { handle.releasePointerCapture(capturedId); } catch (err) { /* ignore capture failures */ }
+    }
 
     const rect = element.getBoundingClientRect();
     await persistDockSize(rect);
@@ -1486,6 +1509,9 @@ function setupDockResize(root) {
     pointerId = event.pointerId;
     element.classList.add("is-resizing");
     element.style.right = "auto";
+    if (typeof handle.setPointerCapture === "function") {
+      try { handle.setPointerCapture(pointerId); } catch (err) { /* ignore capture failures */ }
+    }
 
     window.addEventListener("pointermove", onPointerMove, { passive: false });
     window.addEventListener("pointerup", release, { passive: false });
@@ -1776,31 +1802,19 @@ async function handleEndTurn(combat, combatantId) {
     return;
   }
 
+  let bypassQueuePrompt = false;
   if (currentIsPC) {
-    const plan = await evaluateZipperState(combat, { preview: true });
-    const actedSet = new Set(plan.state.actedIds ?? []);
-    actedSet.add(current.id);
-    const queueState = plan.state.queue ?? emptyQueue();
-
-    const candidates = plan.entries.filter((entry) => {
-      if (entry.side !== "pc") return false;
-      if (entry.isDefeated) return false;
-      if (actedSet.has(entry.id)) return false;
-      return true;
-    });
-
-    const visible = candidates.filter((entry) => !entry.hidden || game.user.isGM);
-    const sanitized = visible.map((entry) => sanitizeEntry(entry, queueState.pc));
-    const result = await promptNextPcQueueDialog(sanitized, {
-      preselectedId: queueState.pc ?? null,
-      allowSkip: true
-    });
-
-    if (!result || result.cancelled) return;
-    await updateQueuedChoice(combat, "pc", result.combatantId);
+    const outcome = await maybePromptForNextPcQueue(combat, { actingCombatant: current });
+    if (outcome.cancelled) return;
+    bypassQueuePrompt = true;
+    queuePromptBypass.add(combat.id);
   }
 
-  await combat.nextTurn();
+  try {
+    await combat.nextTurn();
+  } finally {
+    if (bypassQueuePrompt) queuePromptBypass.delete(combat.id);
+  }
   ui.combat.render(true);
   requestDockRender();
 }
