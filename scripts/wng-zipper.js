@@ -1216,7 +1216,9 @@ async function buildDockContext(combat) {
     npc: { canClear: canClearQueueFor("npc") }
   };
 
-  const preferredCandidate = nextCandidates.find((entry) => entry.canActivate && (game.user.isGM || entry.isOwner))
+  const manualCandidate = nextCandidates.find((entry) => entry.manualSelected && entry.canActivate) ?? null;
+  const preferredCandidate = manualCandidate
+    ?? nextCandidates.find((entry) => entry.canActivate && (game.user.isGM || entry.isOwner))
     ?? nextCandidates.find((entry) => entry.canActivate)
     ?? null;
 
@@ -1241,7 +1243,10 @@ async function buildDockContext(combat) {
     return null;
   })();
 
-  const topNextCandidate = nextCandidates[0] ?? null;
+  const topNextCandidate = manualCandidate
+    ?? nextCandidates.find((entry) => entry.manualSelected)
+    ?? nextCandidates[0]
+    ?? null;
 
   return {
     gm,
