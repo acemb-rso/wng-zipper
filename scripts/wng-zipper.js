@@ -550,7 +550,13 @@ Hooks.once("ready", async () => {
     };
   };
 
-  const C = game.documents.getConstructor("Combat");
+  // Foundry VTT v12 removed `game.documents`, so fall back to the document
+  // class registered on the CONFIG when the legacy accessor is unavailable.
+  const C = game.documents?.getConstructor?.("Combat") ?? CONFIG?.Combat?.documentClass;
+  if (!C) {
+    log("Unable to resolve Combat document constructor; aborting zipper initialization.");
+    return;
+  }
 
   wrap(C, "nextTurn", async function (original, ...args) {
     if (!(await this.getFlag(MODULE_ID, "enabled"))) return original(...args);
