@@ -10,6 +10,7 @@
 
 const MODULE_ID = "wng-zipper-initiative";
 const MANUAL_CHOICE_FLAG = "manualChoice";
+const QUEUED_CHOICES_FLAG = "queuedChoices";
 const DOCK_TEMPLATE = "templates/zipper-tracker.hbs";
 const DOCK_WRAPPER_CLASS = "wng-zipper-tracker-container";
 const DOCK_ROOT_ID = "wng-zipper-dock";
@@ -60,7 +61,7 @@ const formatStatusLabel = (status, entry) => {
   return "Ready";
 };
 
-const sanitizeEntry = (entry, manualId) => {
+const sanitizeEntry = (entry, selectedId) => {
   const statusLabel = formatStatusLabel(entry.status, entry);
   const doc = entry?.doc;
   const actor = doc?.actor;
@@ -78,16 +79,116 @@ const sanitizeEntry = (entry, manualId) => {
     status: entry.status,
     statusLabel,
     hidden: entry.hidden,
-    manualSelected: !!manualId && entry.id === manualId,
+    manualSelected: !!selectedId && entry.id === selectedId,
     isOwner
   };
 };
+
+const emptyQueue = () => ({ pc: null, npc: null });
+
+const cloneQueueState = (queue) => ({
+  pc: typeof queue?.pc === "string" && queue.pc.length ? queue.pc : null,
+  npc: typeof queue?.npc === "string" && queue.npc.length ? queue.npc : null
+});
+
+const isQueueEmpty = (queue) => !(queue?.pc || queue?.npc);
+
+async function persistQueuedChoices(combat, queue) {
+  const normalized = cloneQueueState(queue);
+  if (isQueueEmpty(normalized)) {
+    await combat.unsetFlag(MODULE_ID, QUEUED_CHOICES_FLAG);
+  } else {
+    await combat.setFlag(MODULE_ID, QUEUED_CHOICES_FLAG, normalized);
+  }
+  await combat.unsetFlag(MODULE_ID, MANUAL_CHOICE_FLAG);
+  return normalized;
+}
+
+async function readQueuedChoices(combat, entries = []) {
+  const raw = await combat.getFlag(MODULE_ID, QUEUED_CHOICES_FLAG);
+  let queue = cloneQueueState(raw);
+
+  const legacy = await combat.getFlag(MODULE_ID, MANUAL_CHOICE_FLAG);
+  if (legacy) {
+    let side = null;
+    const entry = entries.find((e) => e.id === legacy);
+    if (entry) {
+      side = entry.side;
+    } else {
+      const doc = combat.combatants?.get?.(legacy);
+      if (doc) side = isPC(doc) ? "pc" : "npc";
+    }
+
+    if (side && !queue[side]) {
+      queue = { ...queue, [side]: legacy };
+    }
+
+    if (game.user.isGM) {
+      await persistQueuedChoices(combat, queue);
+      await combat.unsetFlag(MODULE_ID, MANUAL_CHOICE_FLAG);
+    }
+  }
+
+  return queue;
+}
+
+async function updateQueuedChoice(combat, side, combatantId) {
+  if (!combat || !["pc", "npc"].includes(side)) return emptyQueue();
+  const current = await readQueuedChoices(combat);
+  const nextId = combatantId ?? null;
+  if (current[side] === nextId) return current;
+  const next = { ...current, [side]: nextId };
+  await persistQueuedChoices(combat, next);
+  return next;
+}
+
+async function clearQueuedChoice(combat, side = null) {
+  if (!combat) return;
+  const current = await readQueuedChoices(combat);
+  let changed = false;
+
+  if (side && ["pc", "npc"].includes(side)) {
+    if (current[side]) {
+      current[side] = null;
+      changed = true;
+    }
+  } else if (current.pc || current.npc) {
+    current.pc = null;
+    current.npc = null;
+    changed = true;
+  }
+
+  if (changed) await persistQueuedChoices(combat, current);
+}
 
 const canActivateEntry = (entry, nextSide, allowPlayers) => {
   if (!entry) return false;
   if (nextSide && entry.side !== nextSide) return false;
   if (entry.side === "npc") return game.user.isGM;
   return game.user.isGM || allowPlayers;
+};
+
+const canQueueEntry = (entry, nextSide, currentSide, allowPlayers) => {
+  if (!entry) return false;
+  if (entry.isDefeated) return false;
+  if (entry.acted || entry.isComplete) return false;
+
+  const side = entry.side;
+  if (currentSide && side === currentSide) return false;
+
+  if (side === "npc") {
+    return game.user.isGM;
+  }
+
+  if (side === "pc") {
+    if (game.user.isGM) return true;
+    if (!allowPlayers) return false;
+    if (!entry.isOwner) return false;
+    if (currentSide && currentSide !== "npc") return false;
+    return true;
+  }
+
+  return false;
 };
 
 const SIDE_LABELS = {
@@ -159,16 +260,14 @@ async function evaluateZipperState(combat, opts = {}) {
   const enabled = await combat.getFlag(MODULE_ID, "enabled");
   const startingSide = await combat.getFlag(MODULE_ID, "startingSide") ?? "pc";
   const currentSideFlag = forceStart ? null : await combat.getFlag(MODULE_ID, "currentSide");
-  const manualFlag = await combat.getFlag(MODULE_ID, MANUAL_CHOICE_FLAG);
   const plan = {
     preview,
     enabled,
-    rawManualChoiceId: manualFlag,
     state: {
       startingSide,
       currentSide: currentSideFlag,
       actedIds: [],
-      manualChoiceId: manualFlag,
+      queue: emptyQueue(),
       nextSide: null,
       upcomingSide: null
     },
@@ -182,10 +281,10 @@ async function evaluateZipperState(combat, opts = {}) {
       nextCandidates: [],
       nextSide: null,
       upcomingSide: null,
-      manualChoiceId: manualFlag
+      queue: { pc: null, npc: null }
     },
     choice: null,
-    manualUsed: false,
+    queueConsumedSide: null,
     needsChoice: false,
     clearActed: !!forceStart,
     roundReset: false,
@@ -228,6 +327,9 @@ async function evaluateZipperState(combat, opts = {}) {
 
   plan.entries = entries;
 
+  const queueState = await readQueuedChoices(combat, entries);
+  plan.state.queue = cloneQueueState(queueState);
+
   const visibleEntries = entries.filter(e => !e.hidden || game.user.isGM);
   const available = (side, set = acted) => entries.filter((e) => {
     if (e.side !== side) return false;
@@ -249,30 +351,47 @@ async function evaluateZipperState(combat, opts = {}) {
   const previousSide = forceStart ? null : plan.state.currentSide;
   let options = [];
   let choice = null;
-  let manualEntry = entries.find(e => e.id === plan.state.manualChoiceId && !e.isDefeated && !acted.has(e.id));
+  const queueEntries = { pc: null, npc: null };
 
-  if (manualEntry) {
-    const pool = manualEntry.side === "pc" ? pcAvail : npcAvail;
-    if (!pool.some((e) => e.id === manualEntry.id)) {
-      manualEntry = null;
+  for (const side of ["pc", "npc"]) {
+    const queuedId = plan.state.queue[side];
+    if (!queuedId) continue;
+    const queuedEntry = entries.find((e) => e.id === queuedId);
+    if (!queuedEntry || queuedEntry.side !== side) continue;
+    if (queuedEntry.isDefeated) continue;
+    queueEntries[side] = queuedEntry;
+    if (!queuedEntry.hidden || game.user.isGM) {
+      plan.display.queue[side] = sanitizeEntry(queuedEntry, queuedId);
     }
   }
 
   const resolveNextSide = () => {
-    if (manualEntry) return manualEntry.side;
     if (previousSide === "pc") return "npc";
     if (previousSide === "npc") return "pc";
     return plan.state.startingSide;
   };
 
+  const queuedForSide = (side) => {
+    const entry = queueEntries[side];
+    if (!entry) return null;
+    if (entry.isDefeated) return null;
+    if (acted.has(entry.id)) return null;
+    return entry;
+  };
+
   let nextSide = resolveNextSide();
+  let queuedNext = null;
 
   if (!pcAvail.length && !npcAvail.length) {
     plan.roundReset = true;
     plan.clearActed = true;
     nextSide = plan.state.startingSide;
+    queuedNext = queuedForSide(nextSide);
     options = freshPool(plan.state.startingSide);
-    choice = options[0] ?? null;
+    choice = queuedNext ?? options[0] ?? null;
+    if (queuedNext) {
+      plan.queueConsumedSide = nextSide;
+    }
     if (choice) {
       plan.roundResetMessage = `<strong>Zipper:</strong> All combatants acted. New round begins with <em>${nextSide.toUpperCase()}</em>.`;
     }
@@ -283,11 +402,11 @@ async function evaluateZipperState(combat, opts = {}) {
 
     options = nextSide === "pc" ? pcAvail : npcAvail;
     if (options.length) {
-      if (manualEntry && manualEntry.side === nextSide && options.some(o => o.id === manualEntry.id)) {
-        choice = manualEntry;
-        plan.manualUsed = true;
+      queuedNext = queuedForSide(nextSide);
+      if (queuedNext) {
+        choice = queuedNext;
+        plan.queueConsumedSide = nextSide;
       } else {
-        manualEntry = null;
         const needsChoice = nextSide === "pc" && plan.allowPlayers && options.length > 1;
         plan.needsChoice = needsChoice;
         if (!needsChoice) {
@@ -305,22 +424,20 @@ async function evaluateZipperState(combat, opts = {}) {
 
   plan.options = options;
   plan.choice = choice;
-  plan.state.manualChoiceId = manualEntry ? manualEntry.id : null;
-  plan.display.manualChoiceId = plan.state.manualChoiceId;
-  const effectiveNextSide = options.length ? nextSide : null;
+  const effectiveNextSide = (options.length || queuedNext) ? nextSide : null;
   plan.display.nextSide = effectiveNextSide;
   plan.display.nextCandidates = options
     .filter(e => !e.hidden || game.user.isGM)
     .map((e) => {
-      const sanitized = sanitizeEntry(e, plan.state.manualChoiceId);
+      const sanitized = sanitizeEntry(e, plan.state.queue[e.side]);
       sanitized.canActivate = canActivateEntry(sanitized, effectiveNextSide, plan.allowPlayers);
       return sanitized;
     });
   const currentVisible = visibleEntries.find(e => e.isCurrent) ?? null;
-  plan.display.current = currentVisible ? sanitizeEntry(currentVisible, plan.state.manualChoiceId) : null;
+  plan.display.current = currentVisible ? sanitizeEntry(currentVisible, plan.state.queue[currentVisible.side]) : null;
 
   for (const entry of visibleEntries) {
-    const sanitized = sanitizeEntry(entry, plan.state.manualChoiceId);
+    const sanitized = sanitizeEntry(entry, plan.state.queue[entry.side]);
     if (entry.isDefeated) {
       plan.display.defeated[entry.side].push(sanitized);
       continue;
@@ -646,11 +763,39 @@ async function computeNextZipperCombatant(combat, opts = {}) {
   const turns = combat.turns || [];
   if (!turns.length) return null;
 
-  const manualId = await combat.getFlag(MODULE_ID, MANUAL_CHOICE_FLAG);
   const acted = new Set(await combat.getFlag(MODULE_ID, "actedIds") ?? []);
   if (opts.forceStartOfRound) acted.clear();
   const startingSide = await combat.getFlag(MODULE_ID, "startingSide") ?? "pc";
   const previousSide = opts.forceStartOfRound ? null : await combat.getFlag(MODULE_ID, "currentSide");
+
+  const queueState = await readQueuedChoices(combat, turns);
+  const queue = cloneQueueState(queueState);
+  const queueEntries = { pc: null, npc: null };
+  let queueChanged = false;
+
+  for (const side of ["pc", "npc"]) {
+    const queuedId = queue[side];
+    if (!queuedId) continue;
+    const entry = turns.find((c) => c.id === queuedId);
+    if (!entry) {
+      queue[side] = null;
+      queueChanged = true;
+      continue;
+    }
+    const entrySide = isPC(entry) ? "pc" : "npc";
+    if (entrySide !== side) {
+      queue[side] = null;
+      queueChanged = true;
+      continue;
+    }
+    const defeated = entry.isDefeated ?? entry.defeated ?? false;
+    if (defeated || acted.has(entry.id)) {
+      queue[side] = null;
+      queueChanged = true;
+      continue;
+    }
+    queueEntries[side] = entry;
+  }
 
   const aliveAvailOfSide = (side) => turns.filter((c) => {
     const defeated = c.isDefeated ?? c.defeated ?? false;
@@ -662,38 +807,19 @@ async function computeNextZipperCombatant(combat, opts = {}) {
   const pcAvail = aliveAvailOfSide("pc");
   const npcAvail = aliveAvailOfSide("npc");
 
-  let manualEntry = null;
-  if (manualId) {
-    manualEntry = turns.find((c) => c.id === manualId) ?? null;
-    if (manualEntry) {
-      const defeated = manualEntry.isDefeated ?? manualEntry.defeated ?? false;
-      if (defeated || acted.has(manualEntry.id)) manualEntry = null;
-    }
-    if (!manualEntry) {
-      await combat.unsetFlag(MODULE_ID, MANUAL_CHOICE_FLAG);
-    }
-  }
-
-  if (manualEntry) {
-    const pool = isPC(manualEntry) ? pcAvail : npcAvail;
-    if (!pool.some((c) => c.id === manualEntry.id)) {
-      manualEntry = null;
-      await combat.unsetFlag(MODULE_ID, MANUAL_CHOICE_FLAG);
-    }
-  }
-
   const resolveNextSide = () => {
-    if (manualEntry) return isPC(manualEntry) ? "pc" : "npc";
     if (previousSide === "pc") return "npc";
     if (previousSide === "npc") return "pc";
     return startingSide;
   };
 
   let nextSide = resolveNextSide();
+  let queuedNext = null;
 
   if (!pcAvail.length && !npcAvail.length) {
     await combat.setFlag(MODULE_ID, "actedIds", []);
     await combat.setFlag(MODULE_ID, "currentSide", startingSide);
+    if (queueChanged) await persistQueuedChoices(combat, queue);
     const fresh = aliveAvailOfSide(startingSide);
     if (!fresh.length) return null;
     ChatMessage.create({
@@ -707,27 +833,34 @@ async function computeNextZipperCombatant(combat, opts = {}) {
   if (nextSide === "npc" && !npcAvail.length) nextSide = "pc";
 
   let candidates = nextSide === "pc" ? pcAvail : npcAvail;
-  if (!candidates.length) {
-    if (manualEntry) {
-      candidates = [manualEntry];
-    } else {
-      return null;
-    }
+  const queuedCandidate = queueEntries[nextSide];
+  if (queuedCandidate && candidates.some((c) => c.id === queuedCandidate.id)) {
+    queuedNext = queuedCandidate;
   }
 
-  let chosen = manualEntry ?? candidates[0];
-  if (!manualEntry && nextSide === "pc" && candidates.length > 1) {
-    const selection = await selectPCDialog(candidates);
-    if (selection) {
-      chosen = selection;
+  let chosen = null;
+  if (queuedNext) {
+    chosen = queuedNext;
+    queue[nextSide] = null;
+    queueChanged = true;
+  } else if (candidates.length) {
+    if (nextSide === "pc" && candidates.length > 1) {
+      const selection = await selectPCDialog(candidates);
+      chosen = selection ?? candidates[0];
+    } else {
+      chosen = candidates[0];
     }
+  } else if (queuedCandidate) {
+    chosen = queuedCandidate;
+    queue[nextSide] = null;
+    queueChanged = true;
   }
 
   if (!chosen) return null;
 
   const chosenSide = isPC(chosen) ? "pc" : "npc";
   await combat.setFlag(MODULE_ID, "currentSide", chosenSide);
-  if (manualId) await combat.unsetFlag(MODULE_ID, MANUAL_CHOICE_FLAG);
+  if (queueChanged) await persistQueuedChoices(combat, queue);
 
   await ChatMessage.create({
     content: `<em>Alternate Activation:</em> <strong>${chosenSide.toUpperCase()}</strong> act.`,
@@ -774,6 +907,70 @@ async function selectPCDialog(candidates) {
   });
 }
 
+async function promptNextPcQueueDialog(candidates, { preselectedId = null, allowSkip = true } = {}) {
+  const hasOptions = Array.isArray(candidates) && candidates.length > 0;
+  const content = hasOptions
+    ? `<p>Select who should be <strong>Up Next</strong> for the PCs.</p>
+       <form class="wng-zipper-queue-form">
+         ${candidates.map((c, idx) => {
+           const checked = (preselectedId && c.id === preselectedId) || (!preselectedId && idx === 0);
+           return `
+             <label style="display:flex;align-items:center;gap:8px;margin:6px 0;">
+               <input type="radio" name="pcQueueChoice" value="${c.id}" ${checked ? "checked" : ""}>
+               <img src="${c.img}" width="32" height="32" style="object-fit:cover;border-radius:4px;">
+               <span>${c.name}</span>
+             </label>
+           `;
+         }).join("")}
+       </form>`
+    : `<p>No eligible PCs remain to queue. You can leave the queue empty or cancel ending the turn.</p>`;
+
+  return new Promise((resolve) => {
+    let resolved = false;
+    const buttons = {};
+
+    if (hasOptions) {
+      buttons.confirm = {
+        label: "Queue PC",
+        callback: (html) => {
+          const selected = html[0].querySelector('input[name="pcQueueChoice"]:checked');
+          const id = selected?.value ?? candidates[0]?.id ?? null;
+          resolved = true;
+          resolve({ cancelled: false, combatantId: id });
+        }
+      };
+    }
+
+    if (allowSkip) {
+      buttons.skip = {
+        label: "Leave Empty",
+        callback: () => {
+          resolved = true;
+          resolve({ cancelled: false, combatantId: null });
+        }
+      };
+    }
+
+    buttons.cancel = {
+      label: "Cancel",
+      callback: () => {
+        resolved = true;
+        resolve({ cancelled: true });
+      }
+    };
+
+    new Dialog({
+      title: "Choose Next PC",
+      content,
+      buttons,
+      default: hasOptions ? "confirm" : (allowSkip ? "skip" : "cancel"),
+      close: () => {
+        if (!resolved) resolve({ cancelled: true });
+      }
+    }).render(true);
+  });
+}
+
 /* ---------------------------------------------------------
  * Tracker dock rendering
  * --------------------------------------------------------- */
@@ -802,6 +999,11 @@ async function buildDockContext(combat) {
     dockStyles,
     selectionAction: null,
     topNextCandidate: null,
+    queued: { pc: null, npc: null },
+    queueControls: {
+      pc: { canClear: false },
+      npc: { canClear: false }
+    },
     roundNumber: combat?.round ?? 0,
     turnNumber: Number.isFinite(combat?.turn) ? combat.turn + 1 : null
   };
@@ -809,6 +1011,7 @@ async function buildDockContext(combat) {
   if (!combat) return base;
 
   const plan = await evaluateZipperState(combat, { preview: true });
+  const queueState = plan.state.queue ?? emptyQueue();
   const effectiveNextSide = plan.display.nextSide;
   const priorityLabel = toSideLabel(plan.state.startingSide) ?? "—";
   const nextSideLabel = toSideLabel(effectiveNextSide) ?? null;
@@ -817,27 +1020,36 @@ async function buildDockContext(combat) {
   const spent = cloneDisplayGroup(plan.display.spent);
   const defeated = cloneDisplayGroup(plan.display.defeated);
   const rawCandidates = plan.display.nextCandidates ?? [];
-  const nextCandidates = rawCandidates.map((entry) => {
+
+  const withOwnership = (entry) => {
+    if (!entry) return null;
     const doc = combat.combatants?.get(entry.id) ?? null;
     const actor = doc?.actor ?? null;
     const isOwner = entry.isOwner ?? doc?.isOwner ?? actor?.isOwner ?? false;
-    return {
-      ...entry,
-      isOwner,
-      canActivate: entry.canActivate ?? canActivateEntry(entry, effectiveNextSide, plan.allowPlayers)
-    };
-  });
+    return { ...entry, isOwner };
+  };
 
-  let currentCombatant = plan.display.current ? { ...plan.display.current } : null;
-  if (currentCombatant) {
-    const doc = combat.combatants?.get(currentCombatant.id) ?? null;
-    const actor = doc?.actor ?? null;
-    const isOwner = currentCombatant.isOwner ?? doc?.isOwner ?? actor?.isOwner ?? false;
-    currentCombatant = {
-      ...currentCombatant,
-      isOwner
-    };
-  }
+  let currentCombatant = withOwnership(plan.display.current);
+  const activeDoc = combat.combatant ?? null;
+  const inferredSide = activeDoc ? (isPC(activeDoc) ? "pc" : "npc") : null;
+  const currentSide = currentCombatant?.side ?? inferredSide ?? plan.state.currentSide ?? null;
+
+  const annotateCandidate = (entry) => {
+    const enriched = withOwnership(entry);
+    if (!enriched) return null;
+    const canActivate = entry?.canActivate ?? canActivateEntry(enriched, effectiveNextSide, plan.allowPlayers);
+    const canQueue = plan.enabled && canQueueEntry(enriched, effectiveNextSide, currentSide, plan.allowPlayers);
+    return { ...enriched, canActivate, canQueue };
+  };
+
+  const nextCandidates = rawCandidates.map((entry) => annotateCandidate(entry)).filter(Boolean);
+  ready.pc = ready.pc.map((entry) => annotateCandidate(entry)).filter(Boolean);
+  ready.npc = ready.npc.map((entry) => annotateCandidate(entry)).filter(Boolean);
+
+  const queued = {
+    pc: withOwnership(plan.display.queue.pc),
+    npc: withOwnership(plan.display.queue.npc)
+  };
 
   const allowPlayers = plan.allowPlayers;
   const canSelectPC = plan.enabled && canActivateEntry({ side: "pc" }, effectiveNextSide, allowPlayers);
@@ -849,6 +1061,29 @@ async function buildDockContext(combat) {
       canEndTurn
     };
   }
+
+  const queuePending = ["pc", "npc"].some((side) => {
+    const id = queueState?.[side];
+    if (!id) return false;
+    if (plan.queueConsumedSide && plan.queueConsumedSide === side && effectiveNextSide === side) return false;
+    return true;
+  });
+
+  const canClearQueueFor = (side) => {
+    const entry = queued[side];
+    if (!entry) return false;
+    if (game.user.isGM) return true;
+    if (side !== "pc") return false;
+    if (!plan.allowPlayers) return false;
+    if (!entry.isOwner) return false;
+    if (currentSide && currentSide !== "npc") return false;
+    return true;
+  };
+
+  const queueControls = {
+    pc: { canClear: canClearQueueFor("pc") },
+    npc: { canClear: canClearQueueFor("npc") }
+  };
 
   const preferredCandidate = nextCandidates.find((entry) => entry.canActivate && (game.user.isGM || entry.isOwner))
     ?? nextCandidates.find((entry) => entry.canActivate)
@@ -885,7 +1120,7 @@ async function buildDockContext(combat) {
     nextSideLabel,
     upcomingSideLabel,
     roundReset: plan.roundReset,
-    manualPending: !!plan.state.manualChoiceId && !plan.manualUsed,
+    manualPending: queuePending,
     currentCombatant,
     nextCandidates,
     topNextCandidate,
@@ -899,6 +1134,8 @@ async function buildDockContext(combat) {
     combatId: combat.id,
     nextSide: effectiveNextSide,
     dockStyles,
+    queued,
+    queueControls,
     roundNumber: combat.round ?? 0,
     turnNumber: Number.isFinite(combat.turn) ? combat.turn + 1 : null
   };
@@ -928,6 +1165,12 @@ function bindDockListeners(wrapper) {
           break;
         case "activate":
           await handleManualActivation(combat, target.dataset.combatantId);
+          break;
+        case "queue":
+          await handleQueueRequest(combat, target.dataset.combatantId, target.dataset.side);
+          break;
+        case "queue-clear":
+          await handleQueueClear(combat, target.dataset.side);
           break;
         case "end-turn":
           await handleEndTurn(combat, target.dataset.combatantId);
@@ -1191,6 +1434,7 @@ async function handleSetPriority(combat, side) {
   await combat.setFlag(MODULE_ID, "startingSide", side);
   await combat.setFlag(MODULE_ID, "currentSide", side);
   await combat.setFlag(MODULE_ID, "actedIds", []);
+  await clearQueuedChoice(combat);
   ui.combat.render(true);
   requestDockRender();
 }
@@ -1203,15 +1447,167 @@ async function handleManualActivation(combat, combatantId) {
   }
 
   const plan = await evaluateZipperState(combat, { preview: true });
-  const candidates = plan.display.nextCandidates ?? [];
-  const candidate = candidates.find((c) => c.id === combatantId);
-  if (!candidate || !canActivateEntry(candidate, plan.display.nextSide, plan.allowPlayers)) {
+  const entry = plan.entries.find((e) => e.id === combatantId);
+  if (!entry || entry.isDefeated) {
     ui.notifications.warn("That combatant cannot act right now.");
     return;
   }
 
-  await combat.setFlag(MODULE_ID, MANUAL_CHOICE_FLAG, combatantId);
+  const side = entry.side;
+  const allowPlayers = plan.allowPlayers;
+  const doc = combat.combatants?.get(entry.id) ?? entry.doc ?? null;
+  const actor = doc?.actor ?? null;
+  const isOwner = doc?.isOwner ?? actor?.isOwner ?? false;
+  const queueState = plan.state.queue ?? emptyQueue();
+  const sanitized = sanitizeEntry(entry, queueState[side]);
+  const currentDoc = combat.combatant ?? null;
+  const currentSide = currentDoc ? (isPC(currentDoc) ? "pc" : "npc") : plan.state.currentSide ?? null;
+  const currentId = currentDoc?.id ?? null;
+  const effectiveNextSide = plan.display.nextSide;
+  const canActivateNow = canActivateEntry(sanitized, effectiveNextSide, allowPlayers);
+  const canQueueNow = canQueueEntry({ ...sanitized, isOwner }, effectiveNextSide, currentSide, allowPlayers);
+
+  let mode = null;
+  if (currentSide && currentSide !== side && !game.user.isGM) {
+    if (canQueueNow) mode = "queue";
+  } else if (canActivateNow) {
+    mode = "activate";
+  } else if (canQueueNow) {
+    mode = "queue";
+  } else if (game.user.isGM) {
+    mode = currentSide && currentSide !== side ? "queue" : "activate";
+  }
+
+  if (!mode) {
+    ui.notifications.warn("That combatant cannot act right now.");
+    return;
+  }
+
+  if (!game.user.isGM) {
+    if (side !== "pc") {
+      ui.notifications.warn("You cannot control that combatant.");
+      return;
+    }
+    if (!allowPlayers) {
+      ui.notifications.warn("Only the GM may choose that combatant.");
+      return;
+    }
+    if (!isOwner) {
+      ui.notifications.warn("You do not control that combatant.");
+      return;
+    }
+    if (mode === "activate") {
+      if (currentSide && currentSide !== side) {
+        ui.notifications.warn("Wait for the current activation to finish.");
+        return;
+      }
+      if (currentId && currentId !== combatantId) {
+        ui.notifications.warn("Another combatant is already acting.");
+        return;
+      }
+    }
+  }
+
+  if (mode === "queue") {
+    await updateQueuedChoice(combat, side, combatantId);
+    ui.combat.render(true);
+    requestDockRender();
+    return;
+  }
+
+  await updateQueuedChoice(combat, side, combatantId);
   await combat.nextTurn();
+  ui.combat.render(true);
+  requestDockRender();
+}
+
+async function handleQueueRequest(combat, combatantId, sideHint) {
+  if (!combatantId) return;
+  if (!(await combat.getFlag(MODULE_ID, "enabled"))) {
+    ui.notifications.warn("Zipper initiative is disabled for this combat.");
+    return;
+  }
+
+  const plan = await evaluateZipperState(combat, { preview: true });
+  const entry = plan.entries.find((e) => e.id === combatantId);
+  if (!entry || entry.isDefeated) {
+    ui.notifications.warn("That combatant cannot be queued right now.");
+    return;
+  }
+
+  const side = entry.side;
+  if (sideHint && sideHint !== side) return;
+
+  const allowPlayers = plan.allowPlayers;
+  const doc = combat.combatants?.get(entry.id) ?? entry.doc ?? null;
+  const actor = doc?.actor ?? null;
+  const isOwner = doc?.isOwner ?? actor?.isOwner ?? false;
+  const queueState = plan.state.queue ?? emptyQueue();
+  const sanitized = sanitizeEntry(entry, queueState[side]);
+  const currentDoc = combat.combatant ?? null;
+  const currentSide = currentDoc ? (isPC(currentDoc) ? "pc" : "npc") : plan.state.currentSide ?? null;
+  const effectiveNextSide = plan.display.nextSide;
+
+  if (!canQueueEntry({ ...sanitized, isOwner }, effectiveNextSide, currentSide, allowPlayers)) {
+    ui.notifications.warn("That combatant cannot be queued right now.");
+    return;
+  }
+
+  if (!game.user.isGM) {
+    if (side !== "pc") {
+      ui.notifications.warn("You cannot queue that combatant.");
+      return;
+    }
+    if (!allowPlayers) {
+      ui.notifications.warn("Only the GM may adjust the PC queue.");
+      return;
+    }
+    if (!isOwner) {
+      ui.notifications.warn("You do not control that combatant.");
+      return;
+    }
+  }
+
+  await updateQueuedChoice(combat, side, combatantId);
+  ui.combat.render(true);
+  requestDockRender();
+}
+
+async function handleQueueClear(combat, side) {
+  if (!side || !["pc", "npc"].includes(side)) return;
+  if (!(await combat.getFlag(MODULE_ID, "enabled"))) return;
+
+  const plan = await evaluateZipperState(combat, { preview: true });
+  const queueState = plan.state.queue ?? emptyQueue();
+  const queuedId = queueState[side];
+  if (!queuedId) return;
+
+  const entry = plan.entries.find((e) => e.id === queuedId) ?? null;
+  const sanitized = entry ? sanitizeEntry(entry, queuedId) : null;
+  const isOwner = sanitized?.isOwner ?? entry?.doc?.isOwner ?? entry?.doc?.actor?.isOwner ?? false;
+  const currentDoc = combat.combatant ?? null;
+  const currentSide = currentDoc ? (isPC(currentDoc) ? "pc" : "npc") : plan.state.currentSide ?? null;
+
+  if (!game.user.isGM) {
+    if (side !== "pc") {
+      ui.notifications.warn("You cannot clear that queue.");
+      return;
+    }
+    if (!plan.allowPlayers) {
+      ui.notifications.warn("Only the GM may clear the PC queue.");
+      return;
+    }
+    if (!isOwner) {
+      ui.notifications.warn("You do not control that combatant.");
+      return;
+    }
+    if (currentSide && currentSide !== "npc") {
+      ui.notifications.warn("You can only adjust the PC queue while NPCs are acting.");
+      return;
+    }
+  }
+
+  await updateQueuedChoice(combat, side, null);
   ui.combat.render(true);
   requestDockRender();
 }
@@ -1242,6 +1638,30 @@ async function handleEndTurn(combat, combatantId) {
   if (!game.user.isGM && !(allowPlayers && currentIsPC && currentIsOwner)) {
     ui.notifications.warn("You cannot end this activation.");
     return;
+  }
+
+  if (currentIsPC) {
+    const plan = await evaluateZipperState(combat, { preview: true });
+    const actedSet = new Set(plan.state.actedIds ?? []);
+    actedSet.add(current.id);
+    const queueState = plan.state.queue ?? emptyQueue();
+
+    const candidates = plan.entries.filter((entry) => {
+      if (entry.side !== "pc") return false;
+      if (entry.isDefeated) return false;
+      if (actedSet.has(entry.id)) return false;
+      return true;
+    });
+
+    const visible = candidates.filter((entry) => !entry.hidden || game.user.isGM);
+    const sanitized = visible.map((entry) => sanitizeEntry(entry, queueState.pc));
+    const result = await promptNextPcQueueDialog(sanitized, {
+      preselectedId: queueState.pc ?? null,
+      allowSkip: true
+    });
+
+    if (!result || result.cancelled) return;
+    await updateQueuedChoice(combat, "pc", result.combatantId);
   }
 
   await combat.nextTurn();

@@ -114,6 +114,19 @@
       font-size: 11px;
       letter-spacing: 0.04em;
     }
+    .wng-zipper-tracker .status-pill button {
+      margin-left: 6px;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: inherit;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      cursor: pointer;
+    }
+    .wng-zipper-tracker .status-pill button:hover {
+      background: rgba(255, 255, 255, 0.18);
+    }
     .wng-zipper-tracker .gm-controls {
       margin-left: auto;
       display: flex;
@@ -509,6 +522,20 @@
         <span class="status-pill">Priority: <strong>{{priorityLabel}}</strong></span>
         {{#if nextSideLabel}}<span class="status-pill">Acting: <strong>{{nextSideLabel}}</strong></span>{{/if}}
         {{#if upcomingSideLabel}}<span class="status-pill">Next: <strong>{{upcomingSideLabel}}</strong></span>{{/if}}
+        {{#if queued.pc}}
+          <span class="status-pill">PC Queue: <strong>{{queued.pc.name}}</strong>{{#if queueControls.pc.canClear}}<button data-action="queue-clear" data-side="pc">Clear</button>{{/if}}</span>
+        {{else}}
+          {{#if queueControls.pc.canClear}}
+            <span class="status-pill">PC Queue: <em>None</em></span>
+          {{/if}}
+        {{/if}}
+        {{#if queued.npc}}
+          <span class="status-pill">NPC Queue: <strong>{{queued.npc.name}}</strong>{{#if queueControls.npc.canClear}}<button data-action="queue-clear" data-side="npc">Clear</button>{{/if}}</span>
+        {{else}}
+          {{#if queueControls.npc.canClear}}
+            <span class="status-pill">NPC Queue: <em>None</em></span>
+          {{/if}}
+        {{/if}}
       </div>
       {{#if gm}}
       <div class="gm-controls">
@@ -528,7 +555,7 @@
           <div class="alert">All sides have acted. Waiting to begin the next round.</div>
         {{/if}}
         {{#if manualPending}}
-          <div class="alert">Manual activation queued.</div>
+          <div class="alert">Queue selection pending.</div>
         {{/if}}
         <section class="activation-lane">
           <div class="combatant-card current {{#if currentCombatant.isOwner}}is-owned{{/if}} {{#unless currentCombatant}}is-empty{{/unless}}">
@@ -603,6 +630,9 @@
                     {{#if canActivate}}
                       <button data-action="activate" data-combatant-id="{{id}}" data-side="{{side}}">Activate</button>
                     {{/if}}
+                    {{#if canQueue}}
+                      <button data-action="queue" data-combatant-id="{{id}}" data-side="{{side}}">Queue</button>
+                    {{/if}}
                   </div>
                 </li>
               {{/each}}
@@ -627,11 +657,14 @@
                       </div>
                     </div>
                   </div>
-                  {{#if canActivate}}
-                    <div class="actions">
+                  <div class="actions">
+                    {{#if canActivate}}
                       <button data-action="activate" data-combatant-id="{{id}}" data-side="pc">Activate</button>
-                    </div>
-                  {{/if}}
+                    {{/if}}
+                    {{#if canQueue}}
+                      <button data-action="queue" data-combatant-id="{{id}}" data-side="pc">Queue</button>
+                    {{/if}}
+                  </div>
                 </li>
               {{else}}
                 <li class="empty">No ready PCs.</li>
@@ -653,11 +686,14 @@
                       </div>
                     </div>
                   </div>
-                  {{#if canActivate}}
-                    <div class="actions">
+                  <div class="actions">
+                    {{#if canActivate}}
                       <button data-action="activate" data-combatant-id="{{id}}" data-side="npc">Activate</button>
-                    </div>
-                  {{/if}}
+                    {{/if}}
+                    {{#if canQueue}}
+                      <button data-action="queue" data-combatant-id="{{id}}" data-side="npc">Queue</button>
+                    {{/if}}
+                  </div>
                 </li>
               {{else}}
                 <li class="empty">No ready NPCs.</li>
