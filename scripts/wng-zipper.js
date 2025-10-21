@@ -10,7 +10,7 @@
 
 const MODULE_ID = "wng-zipper-initiative";
 const MANUAL_CHOICE_FLAG = "manualChoice";
-const DOCK_TEMPLATE = `modules/${MODULE_ID}/templates/zipper-tracker.hbs`;
+const DOCK_TEMPLATE = "templates/zipper-tracker.hbs";
 const DOCK_WRAPPER_CLASS = "wng-zipper-tracker-container";
 const DOCK_ROOT_ID = "wng-zipper-dock";
 const DOCK_DEFAULTS = {
@@ -826,7 +826,9 @@ async function renderStandaloneDock() {
   const root = ensureDockRoot();
   const combat = game.combat ?? null;
   const context = await buildDockContext(combat);
-  const rendered = await renderTemplate(DOCK_TEMPLATE, context);
+  const modulePath = game.modules.get(MODULE_ID)?.path ?? `modules/${MODULE_ID}`;
+  const templatePath = `${modulePath}/${DOCK_TEMPLATE}`.replace(/\/+/g, "/");
+  const rendered = await renderTemplate(templatePath, context);
   root.html(`<div class="${DOCK_WRAPPER_CLASS}">${rendered}</div>`);
   bindDockListeners(root);
   root.toggleClass("is-active", !!context.enabled);
