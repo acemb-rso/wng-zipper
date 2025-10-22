@@ -595,7 +595,7 @@ async function ensurePlayersLead(combat, { resetActed = false, resetCurrentSide 
     updates.push(combat.setFlag(MODULE_ID, "actedIds", []));
   }
   if (resetCurrentSide) {
-    updates.push(combat.setFlag(MODULE_ID, "currentSide", PLAYERS_SIDE));
+    updates.push(combat.unsetFlag(MODULE_ID, "currentSide"));
   }
 
   if (!updates.length) return;
@@ -996,7 +996,7 @@ Hooks.on("createCombat", async (combat) => {
     const auto = game.settings.get(MODULE_ID, "enabledByDefault");
     await combat.setFlag(MODULE_ID, "enabled", !!auto);
     await combat.setFlag(MODULE_ID, "actedIds", []);
-    await combat.setFlag(MODULE_ID, "currentSide", auto ? PLAYERS_SIDE : null);
+    await combat.unsetFlag(MODULE_ID, "currentSide");
     if (game.user?.isGM) {
       try {
         await combat.setFlag(MODULE_ID, "startingSide", PLAYERS_SIDE);
