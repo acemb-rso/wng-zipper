@@ -45,6 +45,44 @@ let dockOverrideCache = null;
  * --------------------------------------------------------- */
 const log = (...args) => console.log(`[%c${MODULE_ID}%c]`, "color:#2ea043", "color:inherit", ...args);
 
+function canPersistDockSettings() {
+  try {
+    const user = game?.user ?? null;
+    if (!user) return false;
+    if (user.isGM) return true;
+
+    const perms = (foundry?.CONST?.USER_PERMISSIONS ?? globalThis?.CONST?.USER_PERMISSIONS) ?? null;
+    const candidates = [
+      perms?.CONFIGURE_SETTINGS,
+      perms?.SETTINGS_MODIFY,
+      "CONFIGURE_SETTINGS",
+      "SETTINGS_MODIFY"
+    ];
+
+    for (const key of candidates) {
+      if (!key) continue;
+      if (typeof user.can === "function") {
+        try {
+          if (user.can(key)) return true;
+        } catch (err) {
+          // ignore permission resolution errors
+        }
+      }
+      if (typeof user.hasPermission === "function") {
+        try {
+          if (user.hasPermission(key)) return true;
+        } catch (err) {
+          // ignore permission resolution errors
+        }
+      }
+    }
+  } catch (err) {
+    log(err);
+  }
+
+  return false;
+}
+
 function accessLocalStorage() {
   try {
     return globalThis?.localStorage ?? null;
@@ -1483,6 +1521,12 @@ async function persistDockPosition(rect) {
     ? clamp(Math.round(rect.left), 0, 2000)
     : clamp(Math.round(viewport.width - (rect.left + rect.width)), 0, 2000);
 
+  if (!canPersistDockSettings()) {
+    updateDockOverrides({ anchor, top: topOffset, side: sideOffset, width });
+    requestDockRender();
+    return;
+  }
+
   let saved = false;
   try {
     await Promise.all([
@@ -1510,6 +1554,12 @@ async function persistDockSize(rect) {
   const maxHeight = Math.min(DOCK_SIZE_LIMITS.height.max, Math.max(DOCK_SIZE_LIMITS.height.min, viewport.height - Math.max(0, rect.top)));
   const width = clamp(Math.round(rect.width), DOCK_SIZE_LIMITS.width.min, DOCK_SIZE_LIMITS.width.max);
   const height = clamp(Math.round(rect.height), DOCK_SIZE_LIMITS.height.min, maxHeight);
+
+  if (!canPersistDockSettings()) {
+    updateDockOverrides({ width, height });
+    requestDockRender();
+    return;
+  }
 
   let saved = false;
   try {
@@ -1667,6 +1717,12 @@ function setupDockResize(root) {
   handle.addEventListener("dblclick", async (event) => {
     event.preventDefault();
     event.stopPropagation();
+
+    if (!canPersistDockSettings()) {
+      updateDockOverrides({ height: 0 });
+      requestDockRender();
+      return;
+    }
 
     let saved = false;
     try {
