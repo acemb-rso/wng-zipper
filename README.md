@@ -3,7 +3,7 @@
 > Alternate-activation initiative for Wrath & Glory combats inside Foundry VTT.
 
 ## At a Glance
-- **Current release:** 0.9.0
+- **Current release:** 0.10.0
 - **Foundry VTT:** v11 – v13 (verified on v13)
 - **Wrath & Glory system:** v6+
 
