@@ -3,7 +3,7 @@
  * Author: Ariel Cember + GPT-5
  * Version: 0.3.0
  * 
- * Implements strict alternate-activation (PC↔NPC) initiative with a Priority side each round.
+ * Implements strict alternate-activation (PC↔NPC) initiative with PCs always leading each round.
  * When multiple PCs are eligible, players choose who acts next.
  * GM always retains override authority. Falls back to default Foundry initiative if disabled.
  *******************************************************************************************/
@@ -11,7 +11,6 @@
 const MODULE_ID = "wng-zipper-initiative";
 const MANUAL_CHOICE_FLAG = "manualChoice";
 const QUEUED_CHOICES_FLAG = "queuedChoices";
-const PRIORITY_SELECTION_FLAG = "prioritySelection";
 const DOCK_TEMPLATE = "templates/zipper-tracker.hbs";
 const DOCK_WRAPPER_CLASS = "wng-zipper-tracker-container";
 const DOCK_ROOT_ID = "wng-zipper-dock";
@@ -576,11 +575,63 @@ const cloneDisplayGroup = (group) => ({
   npc: [...(group?.npc ?? [])]
 });
 
+const PLAYERS_SIDE = "pc";
+
+async function ensurePlayersLead(combat, { resetActed = false, resetCurrentSide = false } = {}) {
+  if (!combat) return;
+  if (!game.user?.isGM) return;
+
+  const updates = [];
+  try {
+    const startingSide = await combat.getFlag(MODULE_ID, "startingSide");
+    if (startingSide !== PLAYERS_SIDE) {
+      updates.push(combat.setFlag(MODULE_ID, "startingSide", PLAYERS_SIDE));
+    }
+  } catch (err) {
+    log(err);
+  }
+
+  if (resetActed) {
+    updates.push(combat.setFlag(MODULE_ID, "actedIds", []));
+  }
+  if (resetCurrentSide) {
+    updates.push(combat.setFlag(MODULE_ID, "currentSide", PLAYERS_SIDE));
+  }
+
+  if (!updates.length) return;
+
+  try {
+    await Promise.all(updates);
+  } catch (err) {
+    log(err);
+  }
+}
+
+async function getStartingSide(combat) {
+  if (!combat) return PLAYERS_SIDE;
+  let startingSide = PLAYERS_SIDE;
+  try {
+    const stored = await combat.getFlag(MODULE_ID, "startingSide");
+    if (stored === PLAYERS_SIDE) return PLAYERS_SIDE;
+    startingSide = PLAYERS_SIDE;
+    if (game.user?.isGM) {
+      try {
+        await combat.setFlag(MODULE_ID, "startingSide", PLAYERS_SIDE);
+      } catch (err) {
+        log(err);
+      }
+    }
+  } catch (err) {
+    log(err);
+  }
+  return startingSide;
+}
+
 async function evaluateZipperState(combat, opts = {}) {
   const preview = !!opts.preview;
   const forceStart = !!opts.forceStartOfRound;
   const enabled = await combat.getFlag(MODULE_ID, "enabled");
-  const startingSide = await combat.getFlag(MODULE_ID, "startingSide") ?? "pc";
+  const startingSide = await getStartingSide(combat);
   const currentSideFlag = forceStart ? null : await combat.getFlag(MODULE_ID, "currentSide");
   const plan = {
     preview,
@@ -729,7 +780,8 @@ async function evaluateZipperState(combat, opts = {}) {
       plan.queueConsumedSide = nextSide;
     }
     if (choice) {
-      plan.roundResetMessage = `<strong>Zipper:</strong> All combatants acted. New round begins with <em>${nextSide.toUpperCase()}</em>.`;
+      const nextLabel = toSideLabel(nextSide) ?? nextSide.toUpperCase();
+      plan.roundResetMessage = `<strong>Zipper:</strong> All combatants acted. New round begins with <em>${nextLabel}</em>.`;
     }
     plan.display.upcomingSide = nextSide;
   } else {
@@ -925,81 +977,16 @@ Hooks.on("getCombatTrackerHeaderButtons", (app, buttons) => {
     onclick: async () => {
       if (!combat) return ui.notifications.warn("No active combat.");
       const now = !!(combat.getFlag(MODULE_ID, "enabled"));
-      await combat.setFlag(MODULE_ID, "enabled", !now);
-      if (!now && !(await combat.getFlag(MODULE_ID, "startingSide"))) {
-        await chooseStartingSide(combat);
+      const next = !now;
+      await combat.setFlag(MODULE_ID, "enabled", next);
+      if (next) {
+        await ensurePlayersLead(combat, { resetActed: true, resetCurrentSide: true });
       }
       app.render();
     }
   });
 
-  if (combat?.getFlag(MODULE_ID, "enabled")) {
-    buttons.unshift({
-      label: `Priority: ${combat.getFlag(MODULE_ID, "startingSide")?.toUpperCase() || "?"}`,
-      class: "zipper-priority",
-      icon: "fas fa-trophy",
-      onclick: () => chooseStartingSide(combat)
-    });
-  }
 });
-
-/* ---------------------------------------------------------
- * Priority chooser
- * --------------------------------------------------------- */
-async function persistPrioritySide(combat, side) {
-  if (!combat) return;
-  if (!side || !["pc", "npc"].includes(side)) return;
-  await combat.setFlag(MODULE_ID, "startingSide", side);
-  await combat.setFlag(MODULE_ID, PRIORITY_SELECTION_FLAG, side);
-}
-
-async function chooseStartingSide(combat) {
-  const fallback = (await combat.getFlag(MODULE_ID, "startingSide")) ?? "pc";
-  return new Promise((resolve) => {
-    let done = false;
-    const finalize = async (side) => {
-      if (done) return;
-      done = true;
-      const chosen = side ?? fallback ?? "pc";
-      await persistPrioritySide(combat, chosen);
-      await combat.setFlag(MODULE_ID, "currentSide", chosen);
-      await combat.setFlag(MODULE_ID, "actedIds", []);
-      resolve(chosen);
-    };
-
-    new Dialog({
-      title: "Choose Priority (Starting Side)",
-      content: `<p>Which side has Priority this combat? (Wrath & Glory Core Rules)</p>`,
-      buttons: {
-        pc: {
-          label: "PCs First",
-          callback: () => finalize("pc")
-        },
-        npc: {
-          label: "NPCs First",
-          callback: () => finalize("npc")
-        }
-      },
-      default: fallback === "npc" ? "npc" : "pc",
-      close: () => finalize()
-    }).render(true);
-  });
-}
-
-async function enforcePrioritySelection(combat) {
-  try {
-    if (!combat) return;
-    if (!game.user.isGM) return;
-    if (!(await combat.getFlag(MODULE_ID, "enabled"))) return;
-    const stored = await combat.getFlag(MODULE_ID, PRIORITY_SELECTION_FLAG);
-    if (!stored) return;
-    const current = await combat.getFlag(MODULE_ID, "startingSide");
-    if (current === stored) return;
-    await combat.setFlag(MODULE_ID, "startingSide", stored);
-  } catch (err) {
-    log(err);
-  }
-}
 
 /* ---------------------------------------------------------
  * Initialize per-combat defaults
@@ -1009,21 +996,16 @@ Hooks.on("createCombat", async (combat) => {
     const auto = game.settings.get(MODULE_ID, "enabledByDefault");
     await combat.setFlag(MODULE_ID, "enabled", !!auto);
     await combat.setFlag(MODULE_ID, "actedIds", []);
-    await combat.setFlag(MODULE_ID, "currentSide", null);
-    await combat.setFlag(MODULE_ID, "startingSide", null);
-    await combat.unsetFlag(MODULE_ID, PRIORITY_SELECTION_FLAG);
-    if (auto) await chooseStartingSide(combat);
+    await combat.setFlag(MODULE_ID, "currentSide", auto ? PLAYERS_SIDE : null);
+    if (game.user?.isGM) {
+      try {
+        await combat.setFlag(MODULE_ID, "startingSide", PLAYERS_SIDE);
+      } catch (err) {
+        log(err);
+      }
+    }
+    await ensurePlayersLead(combat);
   } catch (e) { log(e); }
-});
-
-Hooks.on("createCombatant", async (combatant) => {
-  const combat = combatant?.parent ?? combatant?.combat ?? null;
-  await enforcePrioritySelection(combat);
-});
-
-Hooks.on("updateCombatant", async (combatant) => {
-  const combat = combatant?.parent ?? combatant?.combat ?? null;
-  await enforcePrioritySelection(combat);
 });
 
 /* ---------------------------------------------------------
@@ -1034,9 +1016,10 @@ Hooks.on("updateCombat", async (combat, change) => {
     if (!combat?.getFlag(MODULE_ID, "enabled")) return;
     if (typeof change.round === "number") {
       await combat.setFlag(MODULE_ID, "actedIds", []);
-      await combat.setFlag(MODULE_ID, "currentSide", await combat.getFlag(MODULE_ID, "startingSide"));
+      await ensurePlayersLead(combat, { resetCurrentSide: true });
+      const firstLabel = toSideLabel(PLAYERS_SIDE) ?? "PCs";
       await ChatMessage.create({
-        content: `<strong>Zipper:</strong> New round started. Priority resets to <em>${(await combat.getFlag(MODULE_ID, "startingSide"))?.toUpperCase()}</em>.`,
+        content: `<strong>Zipper:</strong> New round started. <em>${firstLabel}</em> act first.`,
         whisper: ChatMessage.getWhisperRecipients("GM")
       });
     }
@@ -1141,7 +1124,7 @@ async function computeNextZipperCombatant(combat, opts = {}) {
 
   const acted = new Set(await combat.getFlag(MODULE_ID, "actedIds") ?? []);
   if (opts.forceStartOfRound) acted.clear();
-  const startingSide = await combat.getFlag(MODULE_ID, "startingSide") ?? "pc";
+  const startingSide = await getStartingSide(combat);
   const previousSide = opts.forceStartOfRound ? null : await combat.getFlag(MODULE_ID, "currentSide");
 
   const queueState = await readQueuedChoices(combat, turns);
@@ -1196,12 +1179,12 @@ async function computeNextZipperCombatant(combat, opts = {}) {
 
   if (!pcAvail.length && !npcAvail.length) {
     await combat.setFlag(MODULE_ID, "actedIds", []);
-    await combat.setFlag(MODULE_ID, "currentSide", startingSide);
+    await ensurePlayersLead(combat, { resetCurrentSide: true });
     if (queueChanged) await persistQueuedChoices(combat, queue);
     const fresh = aliveAvailOfSide(startingSide);
     if (!fresh.length) return null;
     ChatMessage.create({
-      content: `<strong>Zipper:</strong> All combatants acted. New round begins with <em>${startingSide.toUpperCase()}</em>.`,
+      content: `<strong>Zipper:</strong> All combatants acted. New round begins with <em>${(toSideLabel(startingSide) ?? "PCs")}</em>.`,
       whisper: ChatMessage.getWhisperRecipients("GM")
     });
     return fresh[0];
@@ -1366,11 +1349,12 @@ async function maybePromptForNextPcQueue(combat, { actingCombatant = null } = {}
 async function buildDockContext(combat) {
   const gm = game.user.isGM;
   const dockStyles = getDockStyleConfig();
+  const playersFirstLabel = toSideLabel(PLAYERS_SIDE) ?? "PCs";
   const base = {
     gm,
     hasCombat: !!combat,
     enabled: false,
-    priorityLabel: "—",
+    playersFirstLabel,
     nextSideLabel: null,
     upcomingSideLabel: null,
     roundReset: false,
@@ -1403,7 +1387,6 @@ async function buildDockContext(combat) {
   const queueState = plan.state.queue ?? emptyQueue();
   const effectiveNextSide = plan.display.nextSide;
   const combatStarted = !!combat.started;
-  const priorityLabel = toSideLabel(plan.state.startingSide) ?? "—";
   const nextSideLabel = toSideLabel(effectiveNextSide) ?? null;
   const upcomingSideLabel = toSideLabel(plan.display.upcomingSide) ?? null;
   const ready = cloneDisplayGroup(plan.display.ready);
@@ -1511,7 +1494,7 @@ async function buildDockContext(combat) {
     gm,
     hasCombat: true,
     enabled: plan.enabled,
-    priorityLabel,
+    playersFirstLabel,
     nextSideLabel,
     upcomingSideLabel,
     roundReset: plan.roundReset,
@@ -1554,9 +1537,6 @@ function bindDockListeners(wrapper) {
       switch (action) {
         case "toggle-module":
           await handleToggleZipper(combat);
-          break;
-        case "set-priority":
-          await handleSetPriority(combat, target.dataset.side);
           break;
         case "activate":
           await handleManualActivation(combat, target.dataset.combatantId);
@@ -1866,20 +1846,11 @@ function requestDockRender() {
 
 async function handleToggleZipper(combat) {
   const enabled = !!(await combat.getFlag(MODULE_ID, "enabled"));
-  await combat.setFlag(MODULE_ID, "enabled", !enabled);
-  if (!enabled && !(await combat.getFlag(MODULE_ID, "startingSide"))) {
-    await chooseStartingSide(combat);
+  const next = !enabled;
+  await combat.setFlag(MODULE_ID, "enabled", next);
+  if (next) {
+    await ensurePlayersLead(combat, { resetActed: true, resetCurrentSide: true });
   }
-  ui.combat.render(true);
-  requestDockRender();
-}
-
-async function handleSetPriority(combat, side) {
-  if (!side || !["pc", "npc"].includes(side)) return;
-  await persistPrioritySide(combat, side);
-  await combat.setFlag(MODULE_ID, "currentSide", side);
-  await combat.setFlag(MODULE_ID, "actedIds", []);
-  await clearQueuedChoice(combat);
   ui.combat.render(true);
   requestDockRender();
 }
@@ -2132,15 +2103,17 @@ Hooks.once("ready", () => {
   const api = {
     async enableForActiveCombat(on = true) {
       const c = game.combat; if (!c) return false;
-      await c.setFlag(MODULE_ID, "enabled", !!on);
-      if (on && !(await c.getFlag(MODULE_ID, "startingSide"))) await chooseStartingSide(c);
+      const next = !!on;
+      await c.setFlag(MODULE_ID, "enabled", next);
+      if (next) await ensurePlayersLead(c, { resetActed: true, resetCurrentSide: true });
       ui.combat.render(); return true;
     },
     async setPriority(side = "pc") {
       const c = game.combat; if (!c) return false;
-      if (!["pc", "npc"].includes(side)) return false;
-      await persistPrioritySide(c, side);
-      await c.setFlag(MODULE_ID, "currentSide", side);
+      if (side !== PLAYERS_SIDE) {
+        ui.notifications?.warn?.("Zipper priority is fixed to PCs and cannot be reassigned.");
+      }
+      await ensurePlayersLead(c, { resetActed: true, resetCurrentSide: true });
       ui.combat.render(); return true;
     },
     async advanceTo(combatantId) {
