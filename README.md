@@ -10,12 +10,12 @@
 The module replaces the default combat order with true zipper-style initiative: the acting
 side alternates between PCs and NPCs each activation, while still respecting Wrath & Glory's
 round structure and GM authority. A floating "zipper" tracker keeps the table informed about
-priority, eligible combatants, and who has already acted.
+the alternating turn order, eligible combatants, and who has already acted.
 
 ---
 
 ## Features
-- 🔁 **Strict alternating turns** that honor a configurable round priority (PCs or NPCs).
+- 🔁 **Strict alternating turns** with PCs automatically leading each round.
 - 👥 **Player-facing activation controls** that let the party decide who goes next when
   multiple PCs are available (with full GM override and fallback to native initiative).
 - 🪟 **Resizable docked tracker** rendered with Handlebars inspired by the combat carousel
@@ -47,11 +47,11 @@ priority, eligible combatants, and who has already acted.
 ## Using the Zipper Tracker
 1. Start a combat encounter and open the **Combat Tracker**.
 2. Click **Zipper: ON/OFF** to toggle alternate activation for the active combat.
-3. Use the **Priority** control to choose which side (PCs or NPCs) leads the next round.
+3. PCs always lead each round automatically—no priority prompt required.
 4. When several PCs are available, the module prompts the players (or GM) to select who acts.
 5. Queue specific combatants in advance with the dock controls; clear the queue anytime to
    fall back to the natural alternating order.
-6. When a round ends, all acted markers reset and the priority side begins the next cycle.
+6. When a round ends, all acted markers reset and the next cycle begins with the PCs again.
 
 The GM can always override the current combatant, advance rounds manually, or disable the
 module mid-combat—`wng-zipper` respects those decisions and resynchronizes automatically.

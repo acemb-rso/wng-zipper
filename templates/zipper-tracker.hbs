@@ -519,7 +519,7 @@
         {{/if}}
       </div>
       <div class="status-badges">
-        <span class="status-pill">Priority: <strong>{{priorityLabel}}</strong></span>
+        <span class="status-pill">First: <strong>{{playersFirstLabel}}</strong></span>
         {{#if nextSideLabel}}<span class="status-pill">Acting: <strong>{{nextSideLabel}}</strong></span>{{/if}}
         {{#if upcomingSideLabel}}<span class="status-pill">Next: <strong>{{upcomingSideLabel}}</strong></span>{{/if}}
         {{#if queued.pc}}
@@ -540,8 +540,6 @@
       {{#if gm}}
       <div class="gm-controls">
         <button data-action="toggle-module">{{#if enabled}}Disable{{else}}Enable{{/if}} Zipper</button>
-        <button data-action="set-priority" data-side="pc">PC Priority</button>
-        <button data-action="set-priority" data-side="npc">NPC Priority</button>
       </div>
       {{/if}}
     </header>
