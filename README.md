@@ -18,7 +18,7 @@ priority, eligible combatants, and who has already acted.
 - 🔁 **Strict alternating turns** that honor a configurable round priority (PCs or NPCs).
 - 👥 **Player-facing activation controls** that let the party decide who goes next when
   multiple PCs are available (with full GM override and fallback to native initiative).
-- 🪟 **Resizable docked tracker** rendered with Handlebars that mirrors the combat carousel
+- 🪟 **Resizable docked tracker** rendered with Handlebars inspired by the combat carousel
   UX while highlighting current, pending, and completed combatants.
 - 🧭 **Queued activations** for both sides so the GM (or eligible players) can line up the
   next combatant without immediately advancing the turn.
