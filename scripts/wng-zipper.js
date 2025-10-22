@@ -485,7 +485,7 @@ const canQueueEntry = (entry, nextSide, currentSide, allowPlayers, { combatStart
     if (game.user.isGM) return true;
     if (!allowPlayers) return false;
     if (!entry.isOwner) return false;
-    if (combatStarted && currentSide !== "npc") return false;
+    if (combatStarted && currentSide && currentSide !== "npc") return false;
     return true;
   }
 
@@ -1405,13 +1405,14 @@ async function buildDockContext(combat) {
   let currentCombatant = withOwnership(plan.display.current);
   const activeDoc = combat.combatant ?? null;
   const inferredSide = activeDoc ? (isPC(activeDoc) ? "pc" : "npc") : null;
-  const currentSide = currentCombatant?.side ?? inferredSide ?? plan.state.currentSide ?? null;
+  const activeSide = currentCombatant?.side ?? inferredSide ?? null;
+  const currentSide = activeSide ?? plan.state.currentSide ?? null;
 
   const annotateCandidate = (entry) => {
     const enriched = withOwnership(entry);
     if (!enriched) return null;
     const canActivate = entry?.canActivate ?? canActivateEntry(enriched, effectiveNextSide, plan.allowPlayers);
-    const canQueue = plan.enabled && canQueueEntry(enriched, effectiveNextSide, currentSide, plan.allowPlayers, { combatStarted });
+    const canQueue = plan.enabled && canQueueEntry(enriched, effectiveNextSide, activeSide, plan.allowPlayers, { combatStarted });
     return { ...enriched, canActivate, canQueue };
   };
 
@@ -1449,7 +1450,7 @@ async function buildDockContext(combat) {
     if (side !== "pc") return false;
     if (!plan.allowPlayers) return false;
     if (!entry.isOwner) return false;
-    if (currentSide && currentSide !== "npc") return false;
+    if (activeSide && activeSide !== "npc") return false;
     return true;
   };
 
@@ -1962,7 +1963,7 @@ async function handleQueueRequest(combat, combatantId, sideHint) {
   const queueState = plan.state.queue ?? emptyQueue();
   const sanitized = sanitizeEntry(entry, queueState[side]);
   const currentDoc = combat.combatant ?? null;
-  const currentSide = currentDoc ? (isPC(currentDoc) ? "pc" : "npc") : plan.state.currentSide ?? null;
+  const currentSide = currentDoc ? (isPC(currentDoc) ? "pc" : "npc") : null;
   const effectiveNextSide = plan.display.nextSide;
 
   const combatStarted = !!combat.started;
@@ -2004,7 +2005,7 @@ async function handleQueueClear(combat, side) {
   const sanitized = entry ? sanitizeEntry(entry, queuedId) : null;
   const isOwner = sanitized?.isOwner ?? entry?.doc?.isOwner ?? entry?.doc?.actor?.isOwner ?? false;
   const currentDoc = combat.combatant ?? null;
-  const currentSide = currentDoc ? (isPC(currentDoc) ? "pc" : "npc") : plan.state.currentSide ?? null;
+  const currentSide = currentDoc ? (isPC(currentDoc) ? "pc" : "npc") : null;
 
   if (!game.user.isGM) {
     if (side !== "pc") {
