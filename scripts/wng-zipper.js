@@ -14,6 +14,9 @@ const QUEUED_CHOICES_FLAG = "queuedChoices";
 const DOCK_TEMPLATE = "templates/zipper-tracker.hbs";
 const DOCK_WRAPPER_CLASS = "wng-zipper-tracker-container";
 const DOCK_ROOT_ID = "wng-zipper-dock";
+// Default visual configuration for the floating initiative dock. Users can
+// override these at runtime, but we keep a shared baseline so the UI is
+// predictable when the module first boots.
 const DOCK_DEFAULTS = {
   anchor: "right",
   topOffset: 120,
@@ -43,9 +46,14 @@ let dockOverrideCache = null;
 /* ---------------------------------------------------------
  * Utility helpers
  * --------------------------------------------------------- */
+// Lightweight wrapper around console.log so every message is clearly
+// attributed to this module when debugging alongside other packages.
 const log = (...args) => console.log(`[%c${MODULE_ID}%c]`, "color:#2ea043", "color:inherit", ...args);
 
 function canPersistDockSettings() {
+  // Saving dock positions into Foundry settings is restricted to GMs or users
+  // with elevated permissions. Foundry has renamed these permissions over the
+  // years, so we probe every known alias before falling back to a safe default.
   try {
     const user = game?.user ?? null;
     if (!user) return false;
@@ -84,6 +92,9 @@ function canPersistDockSettings() {
 }
 
 function accessLocalStorage() {
+  // Some Foundry deployments (e.g. secure iframes) disable direct localStorage
+  // access. Guard against those scenarios so the module keeps working even if
+  // persistence falls back to in-memory overrides only.
   try {
     return globalThis?.localStorage ?? null;
   } catch {
@@ -92,6 +103,9 @@ function accessLocalStorage() {
 }
 
 function readDockOverrideStorage() {
+  // All dock override data is stored as JSON in a single key. This helper wraps
+  // the parsing logic so consumers can treat the result like a plain object
+  // without worrying about malformed data or unavailable storage.
   const storage = accessLocalStorage();
   if (!storage) return {};
   try {
@@ -106,6 +120,8 @@ function readDockOverrideStorage() {
 }
 
 function writeDockOverrideStorage(data) {
+  // Persist the latest overrides whenever possible. Clearing the key entirely
+  // keeps the storage footprint tiny when users reset to defaults.
   const storage = accessLocalStorage();
   if (!storage) return;
   try {
@@ -120,6 +136,9 @@ function writeDockOverrideStorage(data) {
 }
 
 function getDockOverrides() {
+  // Cache the parsed overrides so we do not repeatedly hit localStorage while
+  // the user drags the dock. Mutations go through updateDockOverrides which
+  // keeps this cache in sync.
   if (!dockOverrideCache) {
     dockOverrideCache = readDockOverrideStorage();
   }
@@ -127,6 +146,9 @@ function getDockOverrides() {
 }
 
 function updateDockOverrides(partial = {}) {
+  // Merge user-supplied overrides into the cached copy, writing the result
+  // back to storage only if something actually changed. This avoids noisy
+  // writes during pointermove events.
   if (!partial || typeof partial !== "object") return getDockOverrides();
   const current = getDockOverrides();
   let changed = false;
@@ -152,6 +174,9 @@ function updateDockOverrides(partial = {}) {
 }
 
 function clearDockOverrides(keys = null) {
+  // Utility to remove one or more override keys. Handy when a setting saves
+  // successfully to the Foundry database and the temporary override would
+  // otherwise hide the persisted value.
   if (keys === null) {
     dockOverrideCache = {};
     writeDockOverrideStorage({});
@@ -198,6 +223,9 @@ const formatStatusLabel = (status, entry) => {
 };
 
 const sanitizeEntry = (entry, selectedId) => {
+  // The dock and prompts run in player-facing contexts, so we strip the
+  // heavyweight Combatant document down to simple fields that are safe to
+  // render or share with non-GM users.
   const statusLabel = formatStatusLabel(entry.status, entry);
   const doc = entry?.doc;
   const actor = doc?.actor;
@@ -221,6 +249,9 @@ const sanitizeEntry = (entry, selectedId) => {
 };
 
 function isCombatantComplete(entry, combat = null) {
+  // Combatants can be marked as "complete" in several ways depending on the
+  // game system. This helper normalizes those checks so the zipper logic
+  // treats all of them consistently when skipping finished actors.
   if (!entry) return false;
   if (entry.isComplete === true) return true;
 
@@ -245,6 +276,8 @@ function isCombatantComplete(entry, combat = null) {
 }
 
 const emptyQueue = () => ({ pc: null, npc: null });
+// Track combats that should temporarily skip the post-turn queue prompt (e.g.
+// when the GM manually ends a turn). Cleared automatically after the next turn.
 const queuePromptBypass = new Set();
 
 const cloneQueueState = (queue) => ({
@@ -255,6 +288,8 @@ const cloneQueueState = (queue) => ({
 const isQueueEmpty = (queue) => !(queue?.pc || queue?.npc);
 
 function resolveCombatById(combatId) {
+  // Support both map-like collections and array fallbacks so we work across
+  // Foundry versions and potential community patches.
   if (!combatId) return null;
   if (game.combat?.id === combatId) return game.combat;
   if (typeof game.combats?.get === "function") return game.combats.get(combatId) ?? null;
@@ -263,12 +298,17 @@ function resolveCombatById(combatId) {
 }
 
 function generateSocketRequestId() {
+  // Foundry exposes randomID in several namespaces. Fall back to Math.random
+  // only if none of them are available (e.g. older builds or testing stubs).
   if (globalThis?.foundry?.utils?.randomID) return foundry.utils.randomID();
   if (typeof randomID === "function") return randomID();
   return Math.random().toString(36).slice(2);
 }
 
 function handleSocketResponse(payload = {}) {
+  // Every outbound socket call registers a pending resolver. When the GM replies
+  // we clean up the entry, cancel any timeout, and deliver the result to the
+  // original caller.
   const requestId = payload.requestId;
   if (!requestId) return;
   const pending = pendingSocketRequests.get(requestId);
@@ -284,6 +324,9 @@ function handleSocketResponse(payload = {}) {
 }
 
 async function applyQueuedChoiceFlags(combat, queue) {
+  // Persist queue selections to the Combat document so they survive reloads and
+  // synchronize across clients. We clear legacy flags while migrating older
+  // data to the new structure.
   const normalized = cloneQueueState(queue);
   if (!combat) return normalized;
   if (isQueueEmpty(normalized)) {
@@ -296,6 +339,9 @@ async function applyQueuedChoiceFlags(combat, queue) {
 }
 
 async function processSocketAction(action, data = {}) {
+  // The GM acts as the authority for queue updates. When a player emits a
+  // socket request the GM instance routes it through here and applies the
+  // mutation server-side.
   switch (action) {
     case "queue:set": {
       const combatId = data?.combatId ?? null;
@@ -312,6 +358,9 @@ async function processSocketAction(action, data = {}) {
 }
 
 async function sendSocketRequest(action, data = {}, { timeout = SOCKET_TIMEOUT_MS } = {}) {
+  // Proxy certain actions through the active GM so player clients that lack
+  // permission can still queue combatants. Requests automatically time out to
+  // avoid hanging the UI if the GM disconnects.
   if (!socketBridgeInitialized) registerSocketBridge();
   if (game.user.isGM) {
     return processSocketAction(action, data);
@@ -336,6 +385,8 @@ async function sendSocketRequest(action, data = {}, { timeout = SOCKET_TIMEOUT_M
 }
 
 function registerSocketBridge() {
+  // Lazily bind to the Foundry socket once it exists. Foundry loads modules
+  // before the socket is ready, so we retry a couple of times before giving up.
   if (socketBridgeInitialized) return;
 
   const socket = game.socket;
@@ -387,6 +438,8 @@ function registerSocketBridge() {
 }
 
 async function persistQueuedChoices(combat, queue) {
+  // GM users write queue flags directly. Everyone else proxies through the GM
+  // via sockets so that world state stays authoritative.
   const normalized = cloneQueueState(queue);
   if (!combat) return normalized;
 
@@ -406,6 +459,8 @@ async function persistQueuedChoices(combat, queue) {
 }
 
 async function readQueuedChoices(combat, entries = []) {
+  // Load the current queue, migrate legacy flags when present, and make sure
+  // the in-memory representation only references valid combatants.
   const raw = await combat.getFlag(MODULE_ID, QUEUED_CHOICES_FLAG);
   let queue = cloneQueueState(raw);
 
@@ -578,6 +633,9 @@ const cloneDisplayGroup = (group) => ({
 const PLAYERS_SIDE = "pc";
 
 async function ensurePlayersLead(combat, { resetActed = false, resetCurrentSide = false } = {}) {
+  // Wrath & Glory specifies that PCs always win the first activation of a round.
+  // Keep the Combat document aligned with that rule and optionally reset state
+  // when the GM toggles the module on mid-fight.
   if (!combat) return;
   if (!game.user?.isGM) return;
 
@@ -608,6 +666,9 @@ async function ensurePlayersLead(combat, { resetActed = false, resetCurrentSide 
 }
 
 async function getStartingSide(combat) {
+  // The starting side is persisted per combat so restarts and reloads remain
+  // deterministic. If someone tampers with the flag we quietly restore PCs as
+  // the priority side.
   if (!combat) return PLAYERS_SIDE;
   let startingSide = PLAYERS_SIDE;
   try {
@@ -628,6 +689,9 @@ async function getStartingSide(combat) {
 }
 
 async function evaluateZipperState(combat, opts = {}) {
+  // This is the heart of the module. Given a combat document it figures out who
+  // has acted, who is eligible, what the queue looks like, and which controls
+  // should be presented. The result powers both server decisions and the dock UI.
   const preview = !!opts.preview;
   const forceStart = !!opts.forceStartOfRound;
   const enabled = await combat.getFlag(MODULE_ID, "enabled");
@@ -676,6 +740,9 @@ async function evaluateZipperState(combat, opts = {}) {
   plan.state.actedIds = Array.from(acted);
 
   const entries = turns.map((turn, index) => {
+    // Flatten the Combatant into a serializable entry. We intentionally copy
+    // the fields we need rather than exposing the entire document to the dock
+    // so render logic stays resilient across Foundry releases.
     const doc = combat.combatants.get(turn.id) ?? turn;
     const status = doc?.getFlag?.("wrath-and-glory", "combatStatus") ?? null;
     const isDefeated = doc?.isDefeated ?? turn.isDefeated ?? turn.defeated ?? false;
@@ -705,6 +772,8 @@ async function evaluateZipperState(combat, opts = {}) {
 
   const visibleEntries = entries.filter(e => !e.hidden || game.user.isGM);
   const available = (side, set = acted) => entries.filter((e) => {
+    // Return the list of eligible combatants for a side, respecting the acted
+    // cache and hiding GM-only tokens from players when necessary.
     if (e.side !== side) return false;
     if (e.isDefeated) return false;
     if (e.isComplete) return false;
@@ -714,6 +783,8 @@ async function evaluateZipperState(combat, opts = {}) {
     return true;
   });
   const freshPool = (side) => entries.filter((e) => {
+    // Similar to available() but without the "already acted" restriction.
+    // Used when an entire round completes so we can quickly find the next opener.
     if (e.side !== side) return false;
     if (e.isDefeated) return false;
     if (e.isComplete) return false;
@@ -730,6 +801,8 @@ async function evaluateZipperState(combat, opts = {}) {
   const queueEntries = { pc: null, npc: null };
 
   for (const side of ["pc", "npc"]) {
+    // Validate queued combatants. If a queued token becomes ineligible we drop
+    // it silently so stale data does not block the activation flow.
     const queuedId = plan.state.queue[side];
     if (!queuedId) continue;
     const queuedEntry = entries.find((e) => e.id === queuedId);
@@ -752,6 +825,8 @@ async function evaluateZipperState(combat, opts = {}) {
   }
 
   const resolveNextSide = () => {
+    // Alternate between PC and NPC sides. The starting side can be forced when
+    // a new round begins so the alternation always realigns with campaign rules.
     if (previousSide === "pc") return "npc";
     if (previousSide === "npc") return "pc";
     return plan.state.startingSide;
@@ -1292,6 +1367,9 @@ async function promptNextPcQueueDialog(candidates, { preselectedId = null, allow
 }
 
 async function maybePromptForNextPcQueue(combat, { actingCombatant = null } = {}) {
+  // After a PC acts, offer their controller the option to nominate who should
+  // go next. This helps groups coordinate without forcing the GM to manage the
+  // queue manually every turn.
   if (!combat) return { cancelled: false, prompted: false };
   if (!(await combat.getFlag(MODULE_ID, "enabled"))) return { cancelled: false, prompted: false };
 
@@ -1347,6 +1425,9 @@ async function maybePromptForNextPcQueue(combat, { actingCombatant = null } = {}
  * Tracker dock rendering
  * --------------------------------------------------------- */
 async function buildDockContext(combat) {
+  // Assemble all of the data the Handlebars template needs. The template stays
+  // intentionally dumb; every branch and permission check happens up front so
+  // the rendered HTML can focus on presentation.
   const gm = game.user.isGM;
   const dockStyles = getDockStyleConfig();
   const playersFirstLabel = toSideLabel(PLAYERS_SIDE) ?? "PCs";
@@ -1395,6 +1476,8 @@ async function buildDockContext(combat) {
   const rawCandidates = plan.display.nextCandidates ?? [];
 
   const withOwnership = (entry) => {
+    // Some systems lazily resolve ownership on demand. Look up the latest
+    // combatant/actor before we expose controls that require ownership checks.
     if (!entry) return null;
     const doc = combat.combatants?.get(entry.id) ?? null;
     const actor = doc?.actor ?? null;
@@ -1521,6 +1604,8 @@ async function buildDockContext(combat) {
 }
 
 function bindDockListeners(wrapper) {
+  // Centralized event delegation for the dock. This keeps us from wiring and
+  // unwiring dozens of individual listeners when the template re-renders.
   wrapper.off("click.wng-zipper");
   wrapper.on("click.wng-zipper", "[data-action]", async (event) => {
     event.preventDefault();
@@ -1570,6 +1655,8 @@ function getViewportBounds() {
 }
 
 async function persistDockPosition(rect) {
+  // Called when the user drags the dock. We translate DOM coordinates into
+  // either persistent settings (for GMs) or temporary overrides (for players).
   const viewport = getViewportBounds();
   const width = clamp(Math.round(rect.width), DOCK_SIZE_LIMITS.width.min, DOCK_SIZE_LIMITS.width.max);
   const topOffset = clamp(Math.round(rect.top), 0, 2000);
@@ -1607,6 +1694,9 @@ async function persistDockPosition(rect) {
 }
 
 async function persistDockSize(rect) {
+  // Similar to persistDockPosition but focused on width/height adjustments.
+  // The Foundry UI can live in windowed Electron or a browser tab, so we clamp
+  // values to the current viewport to keep the dock reachable.
   const viewport = getViewportBounds();
   const maxHeight = Math.min(DOCK_SIZE_LIMITS.height.max, Math.max(DOCK_SIZE_LIMITS.height.min, viewport.height - Math.max(0, rect.top)));
   const width = clamp(Math.round(rect.width), DOCK_SIZE_LIMITS.width.min, DOCK_SIZE_LIMITS.width.max);
@@ -1639,6 +1729,8 @@ async function persistDockSize(rect) {
 }
 
 function setupDockDrag(root) {
+  // Basic pointer-driven drag support for the dock container. We intentionally
+  // avoid jQuery UI or third-party dependencies to minimize compatibility risk.
   const element = root.get(0);
   if (!element) return;
 
@@ -1704,6 +1796,9 @@ function setupDockDrag(root) {
 }
 
 function setupDockResize(root) {
+  // Add a simple bottom-right resize handle. Resizing plays nicely with the
+  // same persistence pipeline as dragging so users can customize the dock once
+  // and keep that layout forever.
   const element = root.get(0);
   if (!element) return;
 
@@ -1816,6 +1911,8 @@ function ensureDockRoot() {
 }
 
 async function renderStandaloneDock() {
+  // Render the floating dock outside of the standard Combat Tracker so players
+  // always have access to zipper controls, even when the sidebar is hidden.
   const root = ensureDockRoot();
   const combat = game.combat ?? null;
   const context = await buildDockContext(combat);
@@ -1832,6 +1929,8 @@ async function renderStandaloneDock() {
 
 let dockRenderPending = false;
 function requestDockRender() {
+  // Rendering can be expensive, so we coalesce multiple requests into a single
+  // microtask. This plays nicely with rapid-fire hooks like updateCombatant.
   if (!game?.ready) return;
   if (dockRenderPending) return;
   dockRenderPending = true;
@@ -1857,6 +1956,9 @@ async function handleToggleZipper(combat) {
 }
 
 async function handleManualActivation(combat, combatantId) {
+  // Allow GMs (and optionally players) to immediately activate a combatant from
+  // the dock. We re-run the same guards as the automatic flow to prevent users
+  // from bypassing the alternating initiative order.
   if (!combatantId) return;
   if (!(await combat.getFlag(MODULE_ID, "enabled"))) {
     ui.notifications.warn("Zipper initiative is disabled for this combat.");
@@ -1940,6 +2042,9 @@ async function handleManualActivation(combat, combatantId) {
 }
 
 async function handleQueueRequest(combat, combatantId, sideHint) {
+  // Queue a combatant for the next activation on their side. Mirrors the prompt
+  // flow but exposes a direct button so the GM can prep several turns in
+  // advance.
   if (!combatantId) return;
   if (!(await combat.getFlag(MODULE_ID, "enabled"))) {
     ui.notifications.warn("Zipper initiative is disabled for this combat.");
@@ -1993,6 +2098,8 @@ async function handleQueueRequest(combat, combatantId, sideHint) {
 }
 
 async function handleQueueClear(combat, side) {
+  // Remove the queued combatant for a side. Useful when plans change or a token
+  // is unexpectedly defeated before their stored activation comes up.
   if (!side || !["pc", "npc"].includes(side)) return;
   if (!(await combat.getFlag(MODULE_ID, "enabled"))) return;
 
@@ -2032,6 +2139,9 @@ async function handleQueueClear(combat, side) {
 }
 
 async function handleEndTurn(combat, combatantId) {
+  // Wrap Combat.nextTurn with zipper-specific behavior. We keep the default
+  // behavior as a fallback so the module plays nicely with other automations
+  // that might call nextTurn() directly.
   if (!(await combat.getFlag(MODULE_ID, "enabled"))) {
     await combat.nextTurn();
     ui.combat.render(true);
