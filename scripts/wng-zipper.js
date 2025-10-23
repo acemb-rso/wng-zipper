@@ -1008,18 +1008,59 @@ Hooks.on("createCombat", async (combat) => {
   } catch (e) { log(e); }
 });
 
+Hooks.on("combatStart", async (combat) => {
+  try {
+    if (!combat?.getFlag(MODULE_ID, "enabled")) return;
+    if (!game.user?.isGM) return;
+    const step = await computeNextZipperCombatant(combat, { forceStartOfRound: true });
+    if (!step || step.type !== "activate" || !step.combatant) return;
+
+    if (step.queueChanged && step.queue) {
+      await persistQueuedChoices(combat, step.queue);
+    }
+
+    try {
+      await combat.setFlag(MODULE_ID, "currentSide", step.side);
+    } catch (err) {
+      log(err);
+    }
+
+    if (step.message) {
+      await ChatMessage.create({
+        content: step.message,
+        whisper: ChatMessage.getWhisperRecipients("GM")
+      });
+    }
+
+    if (typeof combat.setTurn === "function") {
+      await combat.setTurn(step.combatant.id);
+      return;
+    }
+
+    const idx = combat.turns.findIndex(t => t.id === step.combatant.id);
+    if (idx < 0) return;
+    await combat.update({ turn: idx });
+  } catch (e) { log(e); }
+});
+
 /* ---------------------------------------------------------
  * Reset acted list on new round
  * --------------------------------------------------------- */
 Hooks.on("updateCombat", async (combat, change) => {
   try {
     if (!combat?.getFlag(MODULE_ID, "enabled")) return;
+    if (!game.user?.isGM) return;
     if (typeof change.round === "number") {
+      const startingCombat = change?.started === true;
       await combat.setFlag(MODULE_ID, "actedIds", []);
       await ensurePlayersLead(combat, { resetCurrentSide: true });
+      await clearQueuedChoice(combat);
       const firstLabel = toSideLabel(PLAYERS_SIDE) ?? "PCs";
+      const message = startingCombat
+        ? `<strong>Zipper:</strong> Combat started. <em>${firstLabel}</em> act first.`
+        : `<strong>Zipper:</strong> New round ready. <em>${firstLabel}</em> choose the next activation.`;
       await ChatMessage.create({
-        content: `<strong>Zipper:</strong> New round started. <em>${firstLabel}</em> act first.`,
+        content: message,
         whisper: ChatMessage.getWhisperRecipients("GM")
       });
     }
@@ -1082,34 +1123,66 @@ Hooks.once("ready", async () => {
       const outcome = await maybePromptForNextPcQueue(this, { actingCombatant: current });
       if (outcome.cancelled) return this;
     }
-    const nextCombatant = await computeNextZipperCombatant(this);
-    if (!nextCombatant) return original(...args);
 
-    if (typeof this.setTurn === "function") {
-      return this.setTurn(nextCombatant.id);
+    if (current?.id) {
+      try {
+        const acted = new Set(await this.getFlag(MODULE_ID, "actedIds") ?? []);
+        if (!acted.has(current.id)) {
+          acted.add(current.id);
+          await this.setFlag(MODULE_ID, "actedIds", Array.from(acted));
+        }
+      } catch (err) {
+        log(err);
+      }
     }
 
-    const idx = this.turns.findIndex(t => t.id === nextCombatant.id);
+    const step = await computeNextZipperCombatant(this);
+    if (!step) return original(...args);
+
+    if (step.queueChanged && step.queue) {
+      await persistQueuedChoices(this, step.queue);
+    }
+
+    if (step.type === "advance-round") {
+      await this.nextRound();
+      return this;
+    }
+
+    if (step.type !== "activate" || !step.combatant) {
+      return original(...args);
+    }
+
+    try {
+      await this.setFlag(MODULE_ID, "currentSide", step.side);
+    } catch (err) {
+      log(err);
+    }
+
+    if (step.message) {
+      try {
+        await ChatMessage.create({
+          content: step.message,
+          whisper: ChatMessage.getWhisperRecipients("GM")
+        });
+      } catch (err) {
+        log(err);
+      }
+    }
+
+    if (typeof this.setTurn === "function") {
+      await this.setTurn(step.combatant.id);
+      return this;
+    }
+
+    const idx = this.turns.findIndex(t => t.id === step.combatant.id);
     if (idx < 0) return original(...args);
-    return this.update({ turn: idx });
+    await this.update({ turn: idx });
+    return this;
   });
 
   wrap(C, "nextRound", async function (original, ...args) {
     if (!(await this.getFlag(MODULE_ID, "enabled"))) return original(...args);
-
-    const outcome = await original(...args);
-    const nextCombatant = await computeNextZipperCombatant(this, { forceStartOfRound: true });
-    if (!nextCombatant) return outcome;
-
-    if (typeof this.setTurn === "function") {
-      await this.setTurn(nextCombatant.id);
-      return this;
-    }
-
-    const idx = this.turns.findIndex(t => t.id === nextCombatant.id);
-    if (idx < 0) return outcome;
-    await this.update({ turn: idx });
-    return this;
+    return original(...args);
   });
 });
 
@@ -1119,8 +1192,9 @@ Hooks.once("ready", async () => {
 async function computeNextZipperCombatant(combat, opts = {}) {
   const enabled = await combat.getFlag(MODULE_ID, "enabled");
   if (!enabled) return null;
+
   const turns = combat.turns || [];
-  if (!turns.length) return null;
+  if (!turns.length) return { type: "idle" };
 
   const acted = new Set(await combat.getFlag(MODULE_ID, "actedIds") ?? []);
   if (opts.forceStartOfRound) acted.clear();
@@ -1128,7 +1202,7 @@ async function computeNextZipperCombatant(combat, opts = {}) {
   const previousSide = opts.forceStartOfRound ? null : await combat.getFlag(MODULE_ID, "currentSide");
 
   const queueState = await readQueuedChoices(combat, turns);
-  const queue = cloneQueueState(queueState);
+  let queue = cloneQueueState(queueState);
   const queueEntries = { pc: null, npc: null };
   let queueChanged = false;
 
@@ -1137,20 +1211,20 @@ async function computeNextZipperCombatant(combat, opts = {}) {
     if (!queuedId) continue;
     const entry = turns.find((c) => c.id === queuedId);
     if (!entry) {
-      queue[side] = null;
+      queue = { ...queue, [side]: null };
       queueChanged = true;
       continue;
     }
     const entrySide = isPC(entry) ? "pc" : "npc";
     if (entrySide !== side) {
-      queue[side] = null;
+      queue = { ...queue, [side]: null };
       queueChanged = true;
       continue;
     }
     const defeated = entry.isDefeated ?? entry.defeated ?? false;
     const complete = isCombatantComplete(entry, combat);
     if (defeated || complete || acted.has(entry.id)) {
-      queue[side] = null;
+      queue = { ...queue, [side]: null };
       queueChanged = true;
       continue;
     }
@@ -1178,16 +1252,15 @@ async function computeNextZipperCombatant(combat, opts = {}) {
   let queuedNext = null;
 
   if (!pcAvail.length && !npcAvail.length) {
-    await combat.setFlag(MODULE_ID, "actedIds", []);
-    await ensurePlayersLead(combat, { resetCurrentSide: true });
-    if (queueChanged) await persistQueuedChoices(combat, queue);
-    const fresh = aliveAvailOfSide(startingSide);
-    if (!fresh.length) return null;
-    ChatMessage.create({
-      content: `<strong>Zipper:</strong> All combatants acted. New round begins with <em>${(toSideLabel(startingSide) ?? "PCs")}</em>.`,
-      whisper: ChatMessage.getWhisperRecipients("GM")
-    });
-    return fresh[0];
+    const label = toSideLabel(startingSide) ?? startingSide.toUpperCase();
+    const shouldClearQueue = !isQueueEmpty(queue);
+    return {
+      type: "advance-round",
+      queue: shouldClearQueue ? emptyQueue() : queue,
+      queueChanged: queueChanged || shouldClearQueue,
+      startingSide,
+      message: `<strong>Zipper:</strong> All combatants acted. New round ready for <em>${label}</em>.`
+    };
   }
 
   if (nextSide === "pc" && !pcAvail.length) nextSide = "npc";
@@ -1202,28 +1275,35 @@ async function computeNextZipperCombatant(combat, opts = {}) {
   let chosen = null;
   if (queuedNext) {
     chosen = queuedNext;
-    queue[nextSide] = null;
+    queue = { ...queue, [nextSide]: null };
     queueChanged = true;
   } else if (candidates.length) {
     chosen = candidates[0];
   } else if (queuedCandidate) {
     chosen = queuedCandidate;
-    queue[nextSide] = null;
+    queue = { ...queue, [nextSide]: null };
     queueChanged = true;
   }
 
-  if (!chosen) return null;
+  if (!chosen) {
+    return {
+      type: "idle",
+      queue,
+      queueChanged
+    };
+  }
 
   const chosenSide = isPC(chosen) ? "pc" : "npc";
-  await combat.setFlag(MODULE_ID, "currentSide", chosenSide);
-  if (queueChanged) await persistQueuedChoices(combat, queue);
+  const label = toSideLabel(chosenSide) ?? chosenSide.toUpperCase();
 
-  await ChatMessage.create({
-    content: `<em>Alternate Activation:</em> <strong>${chosenSide.toUpperCase()}</strong> act.`,
-    speaker: { alias: "Zipper" }
-  });
-
-  return chosen;
+  return {
+    type: "activate",
+    combatant: chosen,
+    side: chosenSide,
+    queue,
+    queueChanged,
+    message: `<em>Alternate Activation:</em> <strong>${label}</strong> act.`
+  };
 }
 
 async function promptNextPcQueueDialog(candidates, { preselectedId = null, allowSkip = true } = {}) {
@@ -1550,6 +1630,12 @@ function bindDockListeners(wrapper) {
           break;
         case "end-turn":
           await handleEndTurn(combat, target.dataset.combatantId);
+          break;
+        case "reset-round":
+          await handleResetRound(combat);
+          break;
+        case "advance-round":
+          await handleAdvanceRound(combat);
           break;
         default:
           break;
@@ -2027,6 +2113,67 @@ async function handleQueueClear(combat, side) {
   }
 
   await updateQueuedChoice(combat, side, null);
+  ui.combat.render(true);
+  requestDockRender();
+}
+
+async function handleAdvanceRound(combat) {
+  if (!combat) return;
+  if (!game.user?.isGM) {
+    ui.notifications.warn("Only the GM may advance the round.");
+    return;
+  }
+
+  await combat.nextRound();
+  ui.combat.render(true);
+  requestDockRender();
+}
+
+async function handleResetRound(combat) {
+  if (!combat) return;
+  if (!game.user?.isGM) {
+    ui.notifications.warn("Only the GM may reset the round.");
+    return;
+  }
+
+  const enabled = await combat.getFlag(MODULE_ID, "enabled");
+
+  if (enabled) {
+    await combat.setFlag(MODULE_ID, "actedIds", []);
+    await ensurePlayersLead(combat, { resetCurrentSide: true });
+    await clearQueuedChoice(combat);
+    queuePromptBypass.delete(combat.id);
+  }
+
+  let pendingData = [];
+  try {
+    pendingData = combat.combatants?.map?.((c) => (typeof c?.setPending === "function" ? c.setPending() : null))
+      ?.filter(Boolean) ?? [];
+  } catch (err) {
+    log(err);
+  }
+
+  const updateData = { turn: null };
+  if (pendingData.length) updateData.combatants = pendingData;
+
+  try {
+    await combat.update(updateData);
+  } catch (err) {
+    log(err);
+  }
+
+  if (enabled) {
+    const firstLabel = toSideLabel(PLAYERS_SIDE) ?? "PCs";
+    try {
+      await ChatMessage.create({
+        content: `<strong>Zipper:</strong> Round reset. <em>${firstLabel}</em> choose the next activation.`,
+        whisper: ChatMessage.getWhisperRecipients("GM")
+      });
+    } catch (err) {
+      log(err);
+    }
+  }
+
   ui.combat.render(true);
   requestDockRender();
 }
