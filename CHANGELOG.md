@@ -2,6 +2,54 @@
 
 All notable changes to **wng-zipper** will be documented in this file. The project adheres loosely to [Semantic Versioning](https://semver.org/) and the dates follow ISO-8601 format (YYYY-MM-DD).
 
+## [Unreleased]
+### Added
+- Prompt the GM when all combatants are exhausted so they can immediately start the next round or end combat, whispering the outcome to GM chat for clarity.【F:scripts/wng-zipper.js†L1233-L1299】【F:scripts/wng-zipper.js†L1500-L1529】
+
+## [0.11.0] - 2025-10-23
+### Added
+- Auto-select the first activation when combat begins, reset round state, and whisper reminders so GMs always know which side acts next.【F:scripts/wng-zipper.js†L1097-L1151】
+- Gave GMs dedicated dock buttons to reset or advance the round, with handlers that refresh initiative data and rerender the tracker on demand.【F:scripts/zipper-tracker.hbs†L462-L520】【F:scripts/wng-zipper.js†L1800-L1815】【F:scripts/wng-zipper.js†L2311-L2369】
+
+### Changed
+- Wrapped `Combat.nextTurn` so acted combatants are recorded, queue changes persist automatically, and GM prompts fire before advancing rounds.【F:scripts/wng-zipper.js†L1216-L1299】
+
+## [0.10.4] - 2025-10-23
+### Changed
+- Expanded inline documentation across the zipper module and dock template to explain the activation flow and rendering pipeline.【F:scripts/wng-zipper.js†L1-L120】【F:templates/zipper-tracker.hbs†L1-L5】
+
+## [0.10.2] - 2025-10-22
+### Fixed
+- Clearing or restarting combats now removes the stored acting side so zipper initiative restarts cleanly each round.【F:scripts/wng-zipper.js†L646-L674】【F:scripts/wng-zipper.js†L1080-L1093】
+
+## [0.10.1] - 2025-10-22
+### Added
+- Ensured PCs always lead each round by normalizing the priority flag whenever zipper initiative is enabled.【F:scripts/wng-zipper.js†L646-L700】
+
+### Changed
+- Allow queueing combatants even before a side is active by relaxing the queue guardrails and surfacing those candidates in the dock context.【F:scripts/wng-zipper.js†L500-L556】【F:scripts/wng-zipper.js†L1600-L1660】
+
+## [0.10.0] - 2025-10-22
+### Changed
+- Version bump with no additional code changes.
+
+## [0.9.3] - 2025-10-22
+### Added
+- Let players without configuration permissions persist dock moves and resizes locally while keeping GM-authored settings authoritative.【F:scripts/wng-zipper.js†L60-L120】【F:scripts/wng-zipper.js†L1827-L1896】
+- Pruned queued or available combatants that are already defeated or marked complete so stale entries never block alternation.【F:scripts/wng-zipper.js†L1329-L1363】
+
+## [0.9.2] - 2025-10-21
+### Changed
+- Version bump with no additional code changes.
+
+## [0.9.1] - 2025-10-21
+### Added
+- Cached dock overrides in local storage so player adjustments survive reloads even when they lack world-setting permissions.【F:scripts/wng-zipper.js†L101-L205】
+
+### Changed
+- Prevented duplicate queue prompts by tracking manual end-turn flows and honoring the bypass on the next activation.【F:scripts/wng-zipper.js†L288-L293】【F:scripts/wng-zipper.js†L1206-L1299】【F:scripts/wng-zipper.js†L2389-L2414】
+- Guarded dock resizing pointer capture/release so failed browser APIs no longer leave the tracker stuck in a drag state.【F:scripts/wng-zipper.js†L1982-L2033】
+
 ## [0.9.0] - 2025-10-21
 ### Added
 - Optional end-of-turn prompt for PCs that lets the acting player or GM queue the next hero without leaving the tracker flow. 【F:scripts/wng-zipper.js†L855-L874】【F:scripts/wng-zipper.js†L1071-L1120】
