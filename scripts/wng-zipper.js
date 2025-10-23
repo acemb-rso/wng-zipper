@@ -1079,6 +1079,7 @@ Hooks.on("getCombatTrackerHeaderButtons", (app, buttons) => {
  * --------------------------------------------------------- */
 Hooks.on("createCombat", async (combat) => {
   try {
+    if (!game.user?.isGM) return;
     const auto = game.settings.get(MODULE_ID, "enabledByDefault");
     await combat.setFlag(MODULE_ID, "enabled", !!auto);
     await combat.setFlag(MODULE_ID, "actedIds", []);
@@ -1159,6 +1160,7 @@ Hooks.on("updateCombat", async (combat, change) => {
 Hooks.on("combatTurn", async (combat, turn, options) => {
   try {
     if (!combat?.getFlag(MODULE_ID, "enabled")) return;
+    if (!game.user?.isGM) return;
     const prevData = options?.prev ?? combat.previous ?? {};
     const prevId = prevData?.id ?? prevData?.combatantId;
     const prevRound = prevData?.round;
