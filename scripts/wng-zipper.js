@@ -1,11 +1,13 @@
 /*******************************************************************************************
  * Wrath & Glory — Zipper Initiative for Foundry VTT
  * Author: Ariel Cember + GPT-5
- * Version: 0.3.0
+ * Version: 0.10.4
  * 
  * Implements strict alternate-activation (PC↔NPC) initiative with PCs always leading each round.
- * When multiple PCs are eligible, players choose who acts next.
- * GM always retains override authority. Falls back to default Foundry initiative if disabled.
+ * Adds a persistent, draggable initiative dock so the queue is always visible and customizable.
+ * Syncs queued choices across clients via GM-arbitrated sockets, gracefully falling back when offline.
+ * When multiple PCs are eligible, players choose who acts next while the GM retains override authority.
+ * Falls back to default Foundry initiative if disabled.
  *******************************************************************************************/
 
 const MODULE_ID = "wng-zipper-initiative";
@@ -14,9 +16,10 @@ const QUEUED_CHOICES_FLAG = "queuedChoices";
 const DOCK_TEMPLATE = "templates/zipper-tracker.hbs";
 const DOCK_WRAPPER_CLASS = "wng-zipper-tracker-container";
 const DOCK_ROOT_ID = "wng-zipper-dock";
-// Default visual configuration for the floating initiative dock. Users can
-// override these at runtime, but we keep a shared baseline so the UI is
-// predictable when the module first boots.
+// Default visual configuration for the floating initiative dock. Players can
+// override these at runtime, and the dock will remember their preferences
+// between sessions. We keep a shared baseline so the UI is predictable when
+// the module first boots or overrides are cleared.
 const DOCK_DEFAULTS = {
   anchor: "right",
   topOffset: 120,
@@ -34,10 +37,14 @@ const DOCK_SIZE_LIMITS = {
   height: { min: 220, max: 2200 }
 };
 
+// User-specific storage key for persisting dock overrides. This lives in
+// localStorage so it survives reloads without contaminating world data.
 const DOCK_OVERRIDE_STORAGE_KEY = `${MODULE_ID}.dockOverrides`;
 
 const SOCKET_EVENT = `module.${MODULE_ID}`;
 const SOCKET_TIMEOUT_MS = 8000;
+// Track outstanding socket promises so we can resolve or reject them once the
+// GM instance responds (or time out gracefully if they disconnect).
 const pendingSocketRequests = new Map();
 let socketBridgeInitialized = false;
 let socketBridgeRetryTimer = null;
@@ -387,6 +394,8 @@ async function sendSocketRequest(action, data = {}, { timeout = SOCKET_TIMEOUT_M
 function registerSocketBridge() {
   // Lazily bind to the Foundry socket once it exists. Foundry loads modules
   // before the socket is ready, so we retry a couple of times before giving up.
+  // Once connected we proxy player requests through the GM and echo responses
+  // back to whichever client initiated the action.
   if (socketBridgeInitialized) return;
 
   const socket = game.socket;
@@ -460,7 +469,9 @@ async function persistQueuedChoices(combat, queue) {
 
 async function readQueuedChoices(combat, entries = []) {
   // Load the current queue, migrate legacy flags when present, and make sure
-  // the in-memory representation only references valid combatants.
+  // the in-memory representation only references valid combatants. This keeps
+  // long-running campaigns stable even if the data format changes between
+  // versions of the module.
   const raw = await combat.getFlag(MODULE_ID, QUEUED_CHOICES_FLAG);
   let queue = cloneQueueState(raw);
 
