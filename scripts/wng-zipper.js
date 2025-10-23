@@ -1230,6 +1230,40 @@ Hooks.once("ready", async () => {
     }
 
     if (step.type === "advance-round") {
+      let decision = { action: "next-round" };
+      if (game.user?.isGM) {
+        try {
+          decision = await promptRoundAdvanceOrEnd(this, step);
+        } catch (err) {
+          log(err);
+          decision = { action: "next-round" };
+        }
+      }
+
+      if (decision?.action === "end-combat") {
+        try {
+          if (typeof this.endCombat === "function") {
+            await this.endCombat();
+          } else {
+            await this.update({ active: false });
+          }
+        } catch (err) {
+          log(err);
+        }
+        return this;
+      }
+
+      if (game.user?.isGM && step.message) {
+        try {
+          await ChatMessage.create({
+            content: step.message,
+            whisper: ChatMessage.getWhisperRecipients("GM")
+          });
+        } catch (err) {
+          log(err);
+        }
+      }
+
       await this.nextRound();
       return this;
     }
@@ -1452,6 +1486,45 @@ async function promptNextPcQueueDialog(candidates, { preselectedId = null, allow
       default: hasOptions ? "confirm" : (allowSkip ? "skip" : "cancel"),
       close: () => {
         if (!resolved) resolve({ cancelled: true });
+      }
+    }).render(true);
+  });
+}
+
+async function promptRoundAdvanceOrEnd(combat, step = {}) {
+  if (!combat) return { action: "next-round" };
+
+  const startingSide = step.startingSide ?? null;
+  const label = startingSide ? (toSideLabel(startingSide) ?? startingSide.toString().toUpperCase()) : null;
+  const message = step.message ? `<p>${step.message}</p>` : "";
+  const prompt = label
+    ? `<p>All remaining combatants are unavailable. Begin the next round so <em>${label}</em> can act first, or end combat?</p>`
+    : `<p>All remaining combatants are unavailable. Begin the next round or end combat?</p>`;
+
+  return new Promise((resolve) => {
+    let resolved = false;
+    new Dialog({
+      title: "Round Complete",
+      content: `${message}${prompt}`,
+      buttons: {
+        next: {
+          label: "Start Next Round",
+          callback: () => {
+            resolved = true;
+            resolve({ action: "next-round" });
+          }
+        },
+        end: {
+          label: "End Combat",
+          callback: () => {
+            resolved = true;
+            resolve({ action: "end-combat" });
+          }
+        }
+      },
+      default: "next",
+      close: () => {
+        if (!resolved) resolve({ action: "next-round" });
       }
     }).render(true);
   });
