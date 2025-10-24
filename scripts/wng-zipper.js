@@ -57,15 +57,66 @@ let dockOverrideCache = null;
 // attributed to this module when debugging alongside other packages.
 const log = (...args) => console.log(`[%c${MODULE_ID}%c]`, "color:#2ea043", "color:inherit", ...args);
 
-function getLibWrapper() {
-  try {
-    if (globalThis?.libWrapper && typeof globalThis.libWrapper.register === "function") {
-      return globalThis.libWrapper;
+function extractErrorDetail(err) {
+  const seen = new Set();
+  let current = err;
+  while (current && !seen.has(current)) {
+    seen.add(current);
+
+    if (typeof current === "string") {
+      return current;
     }
-  } catch (err) {
-    log(err);
+
+    if (current instanceof Error) {
+      const message = typeof current.message === "string" ? current.message.trim() : "";
+      if (message) return message;
+      current = current.cause ?? null;
+      continue;
+    }
+
+    const message = typeof current?.message === "string" ? current.message.trim() : "";
+    if (message) return message;
+
+    current = current?.cause ?? null;
   }
-  return null;
+
+  return "";
+}
+
+function createEnrichedError(base, err) {
+  const detail = extractErrorDetail(err).trim();
+  const message = detail ? `${base} ${detail}` : `${base} See console for details.`;
+  const enriched = new Error(message);
+
+  if (err instanceof Error && err.stack) {
+    enriched.stack = err.stack;
+  }
+
+  if (err !== undefined) {
+    try {
+      enriched.cause = err;
+    } catch (causeError) {
+      // Older environments may not allow assigning cause; ignore.
+    }
+  }
+
+  return { detail, message, enriched };
+}
+
+function reportDockActionFailure(err, { action = "dock action" } = {}) {
+  const base = `Zipper ${action} failed.`;
+  const { message, enriched } = createEnrichedError(base, err);
+
+  if (err !== undefined) {
+    console.error(`[%c${MODULE_ID}%c] ${message}`, "color:#2ea043", "color:inherit", err);
+  } else {
+    console.error(`[%c${MODULE_ID}%c] ${message}`, "color:#2ea043", "color:inherit");
+  }
+
+  const notify = ui?.notifications?.error ?? null;
+  if (!notify) return;
+
+  notify.call(ui.notifications, enriched);
 }
 
 function canPersistDockSettings() {
@@ -486,9 +537,8 @@ async function persistQueuedChoices(combat, queue) {
     await sendSocketRequest("queue:set", { combatId: combat.id, queue: normalized });
     return normalized;
   } catch (err) {
-    log(err);
-    ui.notifications?.error?.("Failed to update the queued combatant. Please ask the GM to try again.");
-    throw err;
+    const { enriched } = createEnrichedError("Failed to update the queued combatant.", err);
+    throw enriched;
   }
 }
 
@@ -1840,6 +1890,27 @@ async function buildDockContext(combat) {
   };
 }
 
+function describeDockAction(action) {
+  switch (action) {
+    case "toggle-module":
+      return "module toggle";
+    case "activate":
+      return "activation request";
+    case "queue":
+      return "queue update";
+    case "queue-clear":
+      return "queue clear";
+    case "end-turn":
+      return "end turn request";
+    case "reset-round":
+      return "round reset";
+    case "advance-round":
+      return "round advance";
+    default:
+      return "dock action";
+  }
+}
+
 function bindDockListeners(wrapper) {
   // Centralized event delegation for the dock. This keeps us from wiring and
   // unwiring dozens of individual listeners when the template re-renders.
@@ -1883,8 +1954,7 @@ function bindDockListeners(wrapper) {
           break;
       }
     } catch (err) {
-      log(err);
-      ui.notifications.error("Zipper dock action failed. See console for details.");
+      reportDockActionFailure(err, { action: describeDockAction(action) });
     }
   });
 }
