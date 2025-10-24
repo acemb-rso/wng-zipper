@@ -58,6 +58,25 @@ let cachedLibWrapper = undefined;
 // attributed to this module when debugging alongside other packages.
 const log = (...args) => console.log(`[%c${MODULE_ID}%c]`, "color:#2ea043", "color:inherit", ...args);
 
+// Resolve the libWrapper singleton without importing vendor copies from third-party/
+// so Foundry's dependency loader remains the single source of truth.
+function getLibWrapper() {
+  if (cachedLibWrapper !== undefined) {
+    return cachedLibWrapper;
+  }
+
+  try {
+    const lw = globalThis?.libWrapper ?? null;
+    if (lw && typeof lw.register === "function" && typeof lw.unregister === "function") {
+      cachedLibWrapper = lw;
+      return cachedLibWrapper;
+    }
+  } catch (err) {
+    log(err);
+  }
+
+  cachedLibWrapper = null;
+  return cachedLibWrapper;
 function extractErrorDetail(err) {
   const seen = new Set();
   let current = err;
@@ -584,6 +603,35 @@ async function advanceCombatTurn(combat, { bypassPrompt = false } = {}) {
     log(err);
     ui.notifications?.error?.("Failed to advance the turn. Please ask the GM to try again.");
     throw err;
+  }
+}
+
+var advanceCombatTurn = globalThis?.wngZipperAdvanceCombatTurn;
+if (!advanceCombatTurn) {
+  advanceCombatTurn = async function (combat, { bypassPrompt = false } = {}) {
+    if (!combat) return;
+
+    if (game.user?.isGM) {
+      if (bypassPrompt) queuePromptBypass.add(combat.id);
+      try {
+        await combat.nextTurn();
+      } finally {
+        if (bypassPrompt) queuePromptBypass.delete(combat.id);
+      }
+      return;
+    }
+
+    try {
+      await sendSocketRequest("combat:nextTurn", { combatId: combat.id, bypassPrompt });
+    } catch (err) {
+      log(err);
+      ui.notifications?.error?.("Failed to advance the turn. Please ask the GM to try again.");
+      throw err;
+    }
+  };
+
+  if (globalThis) {
+    globalThis.wngZipperAdvanceCombatTurn = advanceCombatTurn;
   }
 }
 

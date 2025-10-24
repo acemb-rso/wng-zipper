@@ -7,6 +7,7 @@ All notable changes to **wng-zipper** will be documented in this file. The proje
 - Prompt the GM when all combatants are exhausted so they can immediately start the next round or end combat, whispering the outcome to GM chat for clarity.【F:scripts/wng-zipper.js†L1233-L1299】【F:scripts/wng-zipper.js†L1500-L1529】
 ### Fixed
 - Wrapped turn advancement through libWrapper and the socket bridge so player end-turn actions execute with GM authority instead of throwing permission errors.【F:scripts/wng-zipper.js†L328-L413】【F:scripts/wng-zipper.js†L474-L520】【F:scripts/wng-zipper.js†L1227-L1313】【F:scripts/wng-zipper.js†L2344-L2413】
+- Ensured the shared `advanceCombatTurn` helper is only defined once so duplicate module evaluations no longer crash with a redeclaration error.【F:scripts/wng-zipper.js†L506-L528】
 
 ## [0.11.0] - 2025-10-23
 ### Added
