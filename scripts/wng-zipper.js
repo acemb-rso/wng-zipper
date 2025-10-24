@@ -1,7 +1,7 @@
 /*******************************************************************************************
  * Wrath & Glory — Zipper Initiative for Foundry VTT
  * Author: Ariel Cember + GPT-5
- * Version: 0.10.4
+ * Version: 0.11.4
  * 
  * Implements strict alternate-activation (PC↔NPC) initiative with PCs always leading each round.
  * Adds a persistent, draggable initiative dock so the queue is always visible and customizable.
@@ -49,7 +49,6 @@ const pendingSocketRequests = new Map();
 let socketBridgeInitialized = false;
 let socketBridgeRetryTimer = null;
 let dockOverrideCache = null;
-let cachedLibWrapper = undefined;
 
 /* ---------------------------------------------------------
  * Utility helpers
@@ -57,27 +56,6 @@ let cachedLibWrapper = undefined;
 // Lightweight wrapper around console.log so every message is clearly
 // attributed to this module when debugging alongside other packages.
 const log = (...args) => console.log(`[%c${MODULE_ID}%c]`, "color:#2ea043", "color:inherit", ...args);
-
-// Resolve the libWrapper singleton without importing vendor copies from third-party/
-// so Foundry's dependency loader remains the single source of truth.
-function getLibWrapper() {
-  if (cachedLibWrapper !== undefined) {
-    return cachedLibWrapper;
-  }
-
-  try {
-    const lw = globalThis?.libWrapper ?? null;
-    if (lw && typeof lw.register === "function" && typeof lw.unregister === "function") {
-      cachedLibWrapper = lw;
-      return cachedLibWrapper;
-    }
-  } catch (err) {
-    log(err);
-  }
-
-  cachedLibWrapper = null;
-  return cachedLibWrapper;
-}
 
 function extractErrorDetail(err) {
   const seen = new Set();
@@ -443,20 +421,6 @@ async function processSocketAction(action, data = {}) {
       await applyQueuedChoiceFlags(combat, queue);
       return { queue };
     }
-    case "combat:nextTurn": {
-      const combatId = data?.combatId ?? null;
-      if (!combatId) throw new Error("Missing combat identifier.");
-      const combat = resolveCombatById(combatId);
-      if (!combat) throw new Error("Combat not found.");
-      const bypassPrompt = !!data?.bypassPrompt;
-      if (bypassPrompt) queuePromptBypass.add(combat.id);
-      try {
-        await combat.nextTurn();
-      } finally {
-        if (bypassPrompt) queuePromptBypass.delete(combat.id);
-      }
-      return { combatId };
-    }
     default:
       throw new Error(`Unknown socket action: ${action}`);
   }
@@ -561,79 +525,6 @@ async function persistQueuedChoices(combat, queue) {
   } catch (err) {
     const { enriched } = createEnrichedError("Failed to update the queued combatant.", err);
     throw enriched;
-  }
-}
-
-async function advanceCombatTurn(combat, { bypassPrompt = false } = {}) {
-  if (!combat) return;
-
-  if (game.user?.isGM) {
-    if (bypassPrompt) queuePromptBypass.add(combat.id);
-    try {
-      await combat.nextTurn();
-    } finally {
-      if (bypassPrompt) queuePromptBypass.delete(combat.id);
-    }
-    return;
-  }
-
-  try {
-    await sendSocketRequest("combat:nextTurn", { combatId: combat.id, bypassPrompt });
-  } catch (err) {
-    log(err);
-    ui.notifications?.error?.("Failed to advance the turn. Please ask the GM to try again.");
-    throw err;
-  }
-}
-
-async function advanceCombatTurn(combat, { bypassPrompt = false } = {}) {
-  if (!combat) return;
-
-  if (game.user?.isGM) {
-    if (bypassPrompt) queuePromptBypass.add(combat.id);
-    try {
-      await combat.nextTurn();
-    } finally {
-      if (bypassPrompt) queuePromptBypass.delete(combat.id);
-    }
-    return;
-  }
-
-  try {
-    await sendSocketRequest("combat:nextTurn", { combatId: combat.id, bypassPrompt });
-  } catch (err) {
-    log(err);
-    ui.notifications?.error?.("Failed to advance the turn. Please ask the GM to try again.");
-    throw err;
-  }
-}
-
-var advanceCombatTurn = globalThis?.wngZipperAdvanceCombatTurn;
-if (!advanceCombatTurn) {
-  advanceCombatTurn = async function (combat, { bypassPrompt = false } = {}) {
-    if (!combat) return;
-
-    if (game.user?.isGM) {
-      if (bypassPrompt) queuePromptBypass.add(combat.id);
-      try {
-        await combat.nextTurn();
-      } finally {
-        if (bypassPrompt) queuePromptBypass.delete(combat.id);
-      }
-      return;
-    }
-
-    try {
-      await sendSocketRequest("combat:nextTurn", { combatId: combat.id, bypassPrompt });
-    } catch (err) {
-      log(err);
-      ui.notifications?.error?.("Failed to advance the turn. Please ask the GM to try again.");
-      throw err;
-    }
-  };
-
-  if (globalThis) {
-    globalThis.wngZipperAdvanceCombatTurn = advanceCombatTurn;
   }
 }
 
@@ -1223,7 +1114,6 @@ Hooks.once("init", () => {
  * Combat Tracker Header Buttons
  * --------------------------------------------------------- */
 Hooks.on("getCombatTrackerHeaderButtons", (app, buttons) => {
-  if (!game.user?.isGM) return;
   const combat = game.combat;
   const enabled = combat?.getFlag(MODULE_ID, "enabled") ?? false;
 
@@ -1347,6 +1237,19 @@ Hooks.on("combatTurn", async (combat, turn, options) => {
  * Core zipper behavior
  * --------------------------------------------------------- */
 Hooks.once("ready", async () => {
+  // Wrap Combat.nextTurn / nextRound
+  const wrap = (klass, method, impl) => {
+    const original = klass.prototype[method];
+    klass.prototype[method] = async function (...args) {
+      try {
+        return await impl.call(this, original.bind(this), ...args);
+      } catch (e) {
+        log(e);
+        return await original.apply(this, args);
+      }
+    };
+  };
+
   // Resolve the Combat document constructor across Foundry versions.
   const combatDocumentClass =
     game.getDocumentClass?.("Combat")
@@ -1360,91 +1263,60 @@ Hooks.once("ready", async () => {
     return;
   }
 
-  const zipperNextTurnWrapper = async function (wrapped, ...args) {
-    try {
-      if (!(await this.getFlag(MODULE_ID, "enabled"))) return wrapped(...args);
+  wrap(C, "nextTurn", async function (original, ...args) {
+    if (!(await this.getFlag(MODULE_ID, "enabled"))) return original(...args);
+    const current = this.combatant ?? null;
+    if (queuePromptBypass.has(this.id)) {
+      queuePromptBypass.delete(this.id);
+    } else {
+      const outcome = await maybePromptForNextPcQueue(this, { actingCombatant: current });
+      if (outcome.cancelled) return this;
+    }
 
-      const current = this.combatant ?? null;
-      const bypass = queuePromptBypass.has(this.id);
-      if (bypass) {
-        queuePromptBypass.delete(this.id);
-      } else {
-        const outcome = await maybePromptForNextPcQueue(this, { actingCombatant: current });
-        if (outcome.cancelled) return this;
-      }
-
-      if (current?.id && game.user?.isGM) {
-        try {
-          const acted = new Set(await this.getFlag(MODULE_ID, "actedIds") ?? []);
-          if (!acted.has(current.id)) {
-            acted.add(current.id);
-            await this.setFlag(MODULE_ID, "actedIds", Array.from(acted));
-          }
-        } catch (err) {
-          log(err);
+    if (current?.id) {
+      try {
+        const acted = new Set(await this.getFlag(MODULE_ID, "actedIds") ?? []);
+        if (!acted.has(current.id)) {
+          acted.add(current.id);
+          await this.setFlag(MODULE_ID, "actedIds", Array.from(acted));
         }
+      } catch (err) {
+        log(err);
       }
+    }
 
-      const step = await computeNextZipperCombatant(this);
-      if (!step) return wrapped(...args);
+    const step = await computeNextZipperCombatant(this);
+    if (!step) return original(...args);
 
-      if (step.queueChanged && step.queue) {
-        await persistQueuedChoices(this, step.queue);
-      }
+    if (step.queueChanged && step.queue) {
+      await persistQueuedChoices(this, step.queue);
+    }
 
-      if (!game.user?.isGM) {
-        await sendSocketRequest("combat:nextTurn", { combatId: this.id, bypassPrompt: bypass });
-        return this;
-      }
-
-      if (step.type === "advance-round") {
-        let decision = { action: "next-round" };
+    if (step.type === "advance-round") {
+      let decision = { action: "next-round" };
+      if (game.user?.isGM) {
         try {
           decision = await promptRoundAdvanceOrEnd(this, step);
         } catch (err) {
           log(err);
           decision = { action: "next-round" };
         }
+      }
 
-        if (decision?.action === "end-combat") {
-          try {
-            if (typeof this.endCombat === "function") {
-              await this.endCombat();
-            } else {
-              await this.update({ active: false });
-            }
-          } catch (err) {
-            log(err);
+      if (decision?.action === "end-combat") {
+        try {
+          if (typeof this.endCombat === "function") {
+            await this.endCombat();
+          } else {
+            await this.update({ active: false });
           }
-          return this;
+        } catch (err) {
+          log(err);
         }
-
-        if (step.message) {
-          try {
-            await ChatMessage.create({
-              content: step.message,
-              whisper: ChatMessage.getWhisperRecipients("GM")
-            });
-          } catch (err) {
-            log(err);
-          }
-        }
-
-        await this.nextRound();
         return this;
       }
 
-      if (step.type !== "activate" || !step.combatant) {
-        return wrapped(...args);
-      }
-
-      try {
-        await this.setFlag(MODULE_ID, "currentSide", step.side);
-      } catch (err) {
-        log(err);
-      }
-
-      if (step.message) {
+      if (game.user?.isGM && step.message) {
         try {
           await ChatMessage.create({
             content: step.message,
@@ -1455,51 +1327,46 @@ Hooks.once("ready", async () => {
         }
       }
 
-      if (typeof this.setTurn === "function") {
-        await this.setTurn(step.combatant.id);
-        return this;
-      }
-
-      const idx = this.turns.findIndex(t => t.id === step.combatant.id);
-      if (idx < 0) return wrapped(...args);
-      await this.update({ turn: idx });
+      await this.nextRound();
       return this;
-    } catch (err) {
-      log(err);
-      return wrapped(...args);
     }
-  };
 
-  const zipperNextRoundWrapper = async function (wrapped, ...args) {
+    if (step.type !== "activate" || !step.combatant) {
+      return original(...args);
+    }
+
     try {
-      if (!(await this.getFlag(MODULE_ID, "enabled"))) return wrapped(...args);
-      return wrapped(...args);
-    } catch (err) {
-      log(err);
-      return wrapped(...args);
-    }
-  };
-
-  const lw = getLibWrapper();
-  if (lw) {
-    try {
-      lw.register(MODULE_ID, "Combat.prototype.nextTurn", zipperNextTurnWrapper, lw.WRAPPER);
-      lw.register(MODULE_ID, "Combat.prototype.nextRound", zipperNextRoundWrapper, lw.WRAPPER);
+      await this.setFlag(MODULE_ID, "currentSide", step.side);
     } catch (err) {
       log(err);
     }
-    return;
-  }
 
-  const originalNextTurn = C.prototype.nextTurn;
-  C.prototype.nextTurn = async function (...args) {
-    return zipperNextTurnWrapper.call(this, originalNextTurn.bind(this), ...args);
-  };
+    if (step.message) {
+      try {
+        await ChatMessage.create({
+          content: step.message,
+          whisper: ChatMessage.getWhisperRecipients("GM")
+        });
+      } catch (err) {
+        log(err);
+      }
+    }
 
-  const originalNextRound = C.prototype.nextRound;
-  C.prototype.nextRound = async function (...args) {
-    return zipperNextRoundWrapper.call(this, originalNextRound.bind(this), ...args);
-  };
+    if (typeof this.setTurn === "function") {
+      await this.setTurn(step.combatant.id);
+      return this;
+    }
+
+    const idx = this.turns.findIndex(t => t.id === step.combatant.id);
+    if (idx < 0) return original(...args);
+    await this.update({ turn: idx });
+    return this;
+  });
+
+  wrap(C, "nextRound", async function (original, ...args) {
+    if (!(await this.getFlag(MODULE_ID, "enabled"))) return original(...args);
+    return original(...args);
+  });
 });
 
 /* ---------------------------------------------------------
@@ -2331,10 +2198,6 @@ function requestDockRender() {
 }
 
 async function handleToggleZipper(combat) {
-  if (!game.user?.isGM) {
-    ui.notifications.warn("Only the GM may toggle zipper initiative.");
-    return;
-  }
   const enabled = !!(await combat.getFlag(MODULE_ID, "enabled"));
   const next = !enabled;
   await combat.setFlag(MODULE_ID, "enabled", next);
@@ -2426,7 +2289,7 @@ async function handleManualActivation(combat, combatantId) {
   }
 
   await updateQueuedChoice(combat, side, combatantId);
-  await advanceCombatTurn(combat);
+  await combat.nextTurn();
   ui.combat.render(true);
   requestDockRender();
 }
@@ -2594,7 +2457,7 @@ async function handleEndTurn(combat, combatantId) {
   // behavior as a fallback so the module plays nicely with other automations
   // that might call nextTurn() directly.
   if (!(await combat.getFlag(MODULE_ID, "enabled"))) {
-    await advanceCombatTurn(combat);
+    await combat.nextTurn();
     ui.combat.render(true);
     requestDockRender();
     return;
@@ -2625,9 +2488,14 @@ async function handleEndTurn(combat, combatantId) {
     const outcome = await maybePromptForNextPcQueue(combat, { actingCombatant: current });
     if (outcome.cancelled) return;
     bypassQueuePrompt = true;
+    queuePromptBypass.add(combat.id);
   }
 
-  await advanceCombatTurn(combat, { bypassPrompt: bypassQueuePrompt });
+  try {
+    await combat.nextTurn();
+  } finally {
+    if (bypassQueuePrompt) queuePromptBypass.delete(combat.id);
+  }
   ui.combat.render(true);
   requestDockRender();
 }
@@ -2660,7 +2528,6 @@ Hooks.once("ready", () => {
   const api = {
     async enableForActiveCombat(on = true) {
       const c = game.combat; if (!c) return false;
-      if (!game.user?.isGM) { ui.notifications?.warn?.("Only the GM may toggle zipper initiative."); return false; }
       const next = !!on;
       await c.setFlag(MODULE_ID, "enabled", next);
       if (next) await ensurePlayersLead(c, { resetActed: true, resetCurrentSide: true });
@@ -2668,7 +2535,6 @@ Hooks.once("ready", () => {
     },
     async setPriority(side = "pc") {
       const c = game.combat; if (!c) return false;
-      if (!game.user?.isGM) { ui.notifications?.warn?.("Only the GM may adjust zipper priority."); return false; }
       if (side !== PLAYERS_SIDE) {
         ui.notifications?.warn?.("Zipper priority is fixed to PCs and cannot be reassigned.");
       }
@@ -2677,11 +2543,10 @@ Hooks.once("ready", () => {
     },
     async advanceTo(combatantId) {
       const c = game.combat; if (!c) return false;
-      if (!game.user?.isGM) { ui.notifications?.warn?.("Only the GM may force the next activation."); return false; }
       if (!combatantId) return false;
       if (!(await c.getFlag(MODULE_ID, "enabled"))) return false;
       await c.setFlag(MODULE_ID, MANUAL_CHOICE_FLAG, combatantId);
-      await advanceCombatTurn(c, { bypassPrompt: true });
+      await c.nextTurn();
       return true;
     },
     async getState(opts = {}) {
