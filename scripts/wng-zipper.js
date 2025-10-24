@@ -77,6 +77,8 @@ function getLibWrapper() {
 
   cachedLibWrapper = null;
   return cachedLibWrapper;
+}
+
 function extractErrorDetail(err) {
   const seen = new Set();
   let current = err;
@@ -562,7 +564,12 @@ async function persistQueuedChoices(combat, queue) {
   }
 }
 
-async function advanceCombatTurn(combat, { bypassPrompt = false } = {}) {
+const existingAdvanceCombatTurn = globalThis?.wngZipperAdvanceCombatTurn;
+
+const advanceCombatTurn = existingAdvanceCombatTurn ?? (async function advanceCombatTurnInternal(
+  combat,
+  { bypassPrompt = false } = {}
+) {
   if (!combat) return;
 
   if (game.user?.isGM) {
@@ -582,57 +589,10 @@ async function advanceCombatTurn(combat, { bypassPrompt = false } = {}) {
     ui.notifications?.error?.("Failed to advance the turn. Please ask the GM to try again.");
     throw err;
   }
-}
+});
 
-async function advanceCombatTurn(combat, { bypassPrompt = false } = {}) {
-  if (!combat) return;
-
-  if (game.user?.isGM) {
-    if (bypassPrompt) queuePromptBypass.add(combat.id);
-    try {
-      await combat.nextTurn();
-    } finally {
-      if (bypassPrompt) queuePromptBypass.delete(combat.id);
-    }
-    return;
-  }
-
-  try {
-    await sendSocketRequest("combat:nextTurn", { combatId: combat.id, bypassPrompt });
-  } catch (err) {
-    log(err);
-    ui.notifications?.error?.("Failed to advance the turn. Please ask the GM to try again.");
-    throw err;
-  }
-}
-
-var advanceCombatTurn = globalThis?.wngZipperAdvanceCombatTurn;
-if (!advanceCombatTurn) {
-  advanceCombatTurn = async function (combat, { bypassPrompt = false } = {}) {
-    if (!combat) return;
-
-    if (game.user?.isGM) {
-      if (bypassPrompt) queuePromptBypass.add(combat.id);
-      try {
-        await combat.nextTurn();
-      } finally {
-        if (bypassPrompt) queuePromptBypass.delete(combat.id);
-      }
-      return;
-    }
-
-    try {
-      await sendSocketRequest("combat:nextTurn", { combatId: combat.id, bypassPrompt });
-    } catch (err) {
-      log(err);
-      ui.notifications?.error?.("Failed to advance the turn. Please ask the GM to try again.");
-      throw err;
-    }
-  };
-
-  if (globalThis) {
-    globalThis.wngZipperAdvanceCombatTurn = advanceCombatTurn;
-  }
+if (!existingAdvanceCombatTurn && globalThis) {
+  globalThis.wngZipperAdvanceCombatTurn = advanceCombatTurn;
 }
 
 async function readQueuedChoices(combat, entries = []) {
