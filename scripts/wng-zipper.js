@@ -1239,13 +1239,45 @@ Hooks.on("combatTurn", async (combat, turn, options) => {
 Hooks.once("ready", async () => {
   // Wrap Combat.nextTurn / nextRound
   const wrap = (klass, method, impl) => {
-    const original = klass.prototype[method];
-    klass.prototype[method] = async function (...args) {
+    const registerWrapperWithLibWrapper = () => {
+      if (!globalThis.libWrapper?.register) return false;
+
+      const handler = async function (wrapped, ...args) {
+        try {
+          return await impl.call(this, wrapped, ...args);
+        } catch (err) {
+          log(err);
+          return await wrapped(...args);
+        }
+      };
+
+      const target = `CONFIG.Combat.documentClass.prototype.${method}`;
       try {
-        return await impl.call(this, original.bind(this), ...args);
-      } catch (e) {
-        log(e);
-        return await original.apply(this, args);
+        const type = globalThis.libWrapper.WRAPPER ?? "WRAPPER";
+        globalThis.libWrapper.register(MODULE_ID, target, handler, type);
+        return true;
+      } catch (err) {
+        log(`libWrapper registration failed for ${target}; falling back to direct wrap.`);
+        log(err);
+        return false;
+      }
+    };
+
+    if (registerWrapperWithLibWrapper()) return;
+
+    const original = klass?.prototype?.[method];
+    if (typeof original !== "function") {
+      log(`Unable to wrap Combat.${method}; original method missing.`);
+      return;
+    }
+
+    klass.prototype[method] = async function (...args) {
+      const boundOriginal = original.bind(this);
+      try {
+        return await impl.call(this, boundOriginal, ...args);
+      } catch (err) {
+        log(err);
+        return await boundOriginal(...args);
       }
     };
   };
