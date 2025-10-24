@@ -44,7 +44,17 @@
         }
       }
     ],
-    "requires": []
+    "requires": [
+      {
+        "id": "lib-wrapper",
+        "type": "module",
+        "manifest": "https://github.com/ruipin/fvtt-lib-wrapper/releases/latest/download/module.json",
+        "compatibility": {
+          "minimum": "1.12.0.0",
+          "verified": "1.13.4.0"
+        }
+      }
+    ]
   },
   "flags": {}
 }
