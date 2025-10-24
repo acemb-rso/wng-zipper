@@ -49,6 +49,7 @@ const pendingSocketRequests = new Map();
 let socketBridgeInitialized = false;
 let socketBridgeRetryTimer = null;
 let dockOverrideCache = null;
+let cachedLibWrapper = undefined;
 
 /* ---------------------------------------------------------
  * Utility helpers
@@ -539,6 +540,28 @@ async function persistQueuedChoices(combat, queue) {
   } catch (err) {
     const { enriched } = createEnrichedError("Failed to update the queued combatant.", err);
     throw enriched;
+  }
+}
+
+async function advanceCombatTurn(combat, { bypassPrompt = false } = {}) {
+  if (!combat) return;
+
+  if (game.user?.isGM) {
+    if (bypassPrompt) queuePromptBypass.add(combat.id);
+    try {
+      await combat.nextTurn();
+    } finally {
+      if (bypassPrompt) queuePromptBypass.delete(combat.id);
+    }
+    return;
+  }
+
+  try {
+    await sendSocketRequest("combat:nextTurn", { combatId: combat.id, bypassPrompt });
+  } catch (err) {
+    log(err);
+    ui.notifications?.error?.("Failed to advance the turn. Please ask the GM to try again.");
+    throw err;
   }
 }
 
