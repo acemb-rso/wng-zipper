@@ -291,6 +291,87 @@ const formatStatusLabel = (status, entry) => {
   return "Ready";
 };
 
+const OWNERSHIP_LEVELS = (() => {
+  if (CONST?.DOCUMENT_OWNERSHIP_LEVELS) return CONST.DOCUMENT_OWNERSHIP_LEVELS;
+  if (CONST?.DOCUMENT_PERMISSION_LEVELS) return CONST.DOCUMENT_PERMISSION_LEVELS;
+  return { NONE: 0, LIMITED: 1, OBSERVER: 2, OWNER: 3 };
+})();
+
+const OWNER_LEVEL = Number.isFinite(OWNERSHIP_LEVELS?.OWNER) ? OWNERSHIP_LEVELS.OWNER : 3;
+const OBSERVER_LEVEL = Number.isFinite(OWNERSHIP_LEVELS?.OBSERVER) ? OWNERSHIP_LEVELS.OBSERVER : 2;
+
+const hasDocumentPermission = (doc, level) => {
+  if (!doc || !game?.user) return false;
+
+  try {
+    if (typeof doc.testUserPermission === "function") {
+      return !!doc.testUserPermission(game.user, level);
+    }
+  } catch {
+    // Ignore permission resolution errors
+  }
+
+  const ownership = doc.ownership ?? doc.permission ?? null;
+  if (!ownership) return false;
+
+  const userId = game.user.id;
+  let value = ownership[userId];
+  if (!Number.isFinite(value)) value = ownership.default;
+  value = Number(value);
+  return Number.isFinite(value) && value >= level;
+};
+
+const computeEntryPermissions = (doc, actor, fallback = {}) => {
+  if (game.user?.isGM) {
+    return { isOwner: true, canControl: true };
+  }
+
+  const fallbackOwner = fallback.isOwner === true;
+  let isOwner = fallbackOwner;
+  let canControl = fallback.canControl ?? fallbackOwner;
+
+  try {
+    if (!isOwner && doc?.isOwner) isOwner = true;
+  } catch {
+    // Ignore
+  }
+
+  try {
+    if (!isOwner && actor?.isOwner) isOwner = true;
+  } catch {
+    // Ignore
+  }
+
+  if (!isOwner && hasDocumentPermission(doc, OWNER_LEVEL)) {
+    isOwner = true;
+  }
+
+  if (!isOwner && hasDocumentPermission(actor, OWNER_LEVEL)) {
+    isOwner = true;
+  }
+
+  if (!canControl) {
+    if (isOwner) {
+      canControl = true;
+    } else if (hasDocumentPermission(doc, OBSERVER_LEVEL)) {
+      canControl = true;
+    } else {
+      let actorHasPlayerOwner = false;
+      try {
+        actorHasPlayerOwner = !!actor?.hasPlayerOwner;
+      } catch {
+        actorHasPlayerOwner = false;
+      }
+
+      if (actorHasPlayerOwner && hasDocumentPermission(actor, OBSERVER_LEVEL)) {
+        canControl = true;
+      }
+    }
+  }
+
+  return { isOwner, canControl };
+};
+
 const sanitizeEntry = (entry, selectedId) => {
   // The dock and prompts run in player-facing contexts, so we strip the
   // heavyweight Combatant document down to simple fields that are safe to
@@ -298,7 +379,7 @@ const sanitizeEntry = (entry, selectedId) => {
   const statusLabel = formatStatusLabel(entry.status, entry);
   const doc = entry?.doc;
   const actor = doc?.actor;
-  const isOwner = doc?.isOwner ?? actor?.isOwner ?? false;
+  const { isOwner, canControl } = computeEntryPermissions(doc, actor, entry);
   return {
     id: entry.id,
     name: entry.name,
@@ -313,7 +394,8 @@ const sanitizeEntry = (entry, selectedId) => {
     statusLabel,
     hidden: entry.hidden,
     manualSelected: !!selectedId && entry.id === selectedId,
-    isOwner
+    isOwner,
+    canControl
   };
 };
 
@@ -611,7 +693,7 @@ const canQueueEntry = (entry, nextSide, currentSide, allowPlayers, { combatStart
   if (side === "pc") {
     if (game.user.isGM) return true;
     if (!allowPlayers) return false;
-    if (!entry.isOwner) return false;
+    if (!entry.canControl) return false;
     if (combatStarted && currentSide && currentSide !== "npc") return false;
     return true;
   }
@@ -1636,8 +1718,8 @@ async function maybePromptForNextPcQueue(combat, { actingCombatant = null } = {}
   if (!current || !isPC(current)) return { cancelled: false, prompted: false };
 
   const allowPlayers = game.settings.get(MODULE_ID, "playersCanAdvance");
-  const isOwner = current.isOwner ?? current.actor?.isOwner ?? false;
-  if (!game.user.isGM && !(allowPlayers && isOwner)) return { cancelled: false, prompted: false };
+  const { canControl: currentCanControl } = computeEntryPermissions(current, current.actor, current);
+  if (!game.user.isGM && !(allowPlayers && currentCanControl)) return { cancelled: false, prompted: false };
 
   const plan = await evaluateZipperState(combat, { preview: true });
   const actedSet = new Set(plan.state.actedIds ?? []);
@@ -1660,7 +1742,7 @@ async function maybePromptForNextPcQueue(combat, { actingCombatant = null } = {}
     try {
       const doc = combat.combatants?.get(entry.id) ?? entry.doc ?? null;
       const actor = doc?.actor ?? null;
-      return doc?.isOwner ?? actor?.isOwner ?? false;
+      return computeEntryPermissions(doc, actor, entry).canControl;
     } catch {
       return false;
     }
@@ -1734,24 +1816,24 @@ async function buildDockContext(combat) {
   const defeated = cloneDisplayGroup(plan.display.defeated);
   const rawCandidates = plan.display.nextCandidates ?? [];
 
-  const withOwnership = (entry) => {
+  const withPermissions = (entry) => {
     // Some systems lazily resolve ownership on demand. Look up the latest
     // combatant/actor before we expose controls that require ownership checks.
     if (!entry) return null;
     const doc = combat.combatants?.get(entry.id) ?? null;
     const actor = doc?.actor ?? null;
-    const isOwner = entry.isOwner ?? doc?.isOwner ?? actor?.isOwner ?? false;
-    return { ...entry, isOwner };
+    const { isOwner, canControl } = computeEntryPermissions(doc, actor, entry);
+    return { ...entry, isOwner, canControl };
   };
 
-  let currentCombatant = withOwnership(plan.display.current);
+  let currentCombatant = withPermissions(plan.display.current);
   const activeDoc = combat.combatant ?? null;
   const inferredSide = activeDoc ? (isPC(activeDoc) ? "pc" : "npc") : null;
   const activeSide = currentCombatant?.side ?? inferredSide ?? null;
   const currentSide = activeSide ?? plan.state.currentSide ?? null;
 
   const annotateCandidate = (entry) => {
-    const enriched = withOwnership(entry);
+    const enriched = withPermissions(entry);
     if (!enriched) return null;
     const canActivate = entry?.canActivate ?? canActivateEntry(enriched, effectiveNextSide, plan.allowPlayers);
     const canQueue = plan.enabled && canQueueEntry(enriched, effectiveNextSide, activeSide, plan.allowPlayers, { combatStarted });
@@ -1763,14 +1845,14 @@ async function buildDockContext(combat) {
   ready.npc = ready.npc.map((entry) => annotateCandidate(entry)).filter(Boolean);
 
   const queued = {
-    pc: withOwnership(plan.display.queue.pc),
-    npc: withOwnership(plan.display.queue.npc)
+    pc: withPermissions(plan.display.queue.pc),
+    npc: withPermissions(plan.display.queue.npc)
   };
 
   const allowPlayers = plan.allowPlayers;
   const canSelectPC = plan.enabled && canActivateEntry({ side: "pc" }, effectiveNextSide, allowPlayers);
   const canSelectNPC = plan.enabled && canActivateEntry({ side: "npc" }, effectiveNextSide, allowPlayers);
-  const canEndTurn = plan.enabled && !!currentCombatant && (game.user.isGM || (currentCombatant.side === "pc" && allowPlayers && currentCombatant.isOwner));
+  const canEndTurn = plan.enabled && !!currentCombatant && (game.user.isGM || (currentCombatant.side === "pc" && allowPlayers && currentCombatant.canControl));
   if (currentCombatant) {
     currentCombatant = {
       ...currentCombatant,
@@ -1791,7 +1873,7 @@ async function buildDockContext(combat) {
     if (game.user.isGM) return true;
     if (side !== "pc") return false;
     if (!plan.allowPlayers) return false;
-    if (!entry.isOwner) return false;
+    if (!entry.canControl) return false;
     if (activeSide && activeSide !== "npc") return false;
     return true;
   };
@@ -1803,7 +1885,7 @@ async function buildDockContext(combat) {
 
   const manualCandidate = nextCandidates.find((entry) => entry.manualSelected && entry.canActivate) ?? null;
   const preferredCandidate = manualCandidate
-    ?? nextCandidates.find((entry) => entry.canActivate && (game.user.isGM || entry.isOwner))
+    ?? nextCandidates.find((entry) => entry.canActivate && (game.user.isGM || entry.canControl))
     ?? nextCandidates.find((entry) => entry.canActivate)
     ?? null;
 
@@ -2259,9 +2341,6 @@ async function handleManualActivation(combat, combatantId) {
 
   const side = entry.side;
   const allowPlayers = plan.allowPlayers;
-  const doc = combat.combatants?.get(entry.id) ?? entry.doc ?? null;
-  const actor = doc?.actor ?? null;
-  const isOwner = doc?.isOwner ?? actor?.isOwner ?? false;
   const queueState = plan.state.queue ?? emptyQueue();
   const sanitized = sanitizeEntry(entry, queueState[side]);
   const currentDoc = combat.combatant ?? null;
@@ -2270,7 +2349,7 @@ async function handleManualActivation(combat, combatantId) {
   const effectiveNextSide = plan.display.nextSide;
   const combatStarted = !!combat.started;
   const canActivateNow = canActivateEntry(sanitized, effectiveNextSide, allowPlayers);
-  const canQueueNow = canQueueEntry({ ...sanitized, isOwner }, effectiveNextSide, currentSide, allowPlayers, { combatStarted });
+  const canQueueNow = canQueueEntry(sanitized, effectiveNextSide, currentSide, allowPlayers, { combatStarted });
 
   let mode = null;
   if (currentSide && currentSide !== side && !game.user.isGM) {
@@ -2297,7 +2376,7 @@ async function handleManualActivation(combat, combatantId) {
       ui.notifications.warn("Only the GM may choose that combatant.");
       return;
     }
-    if (!isOwner) {
+    if (!sanitized.canControl) {
       ui.notifications.warn("You do not control that combatant.");
       return;
     }
@@ -2347,9 +2426,6 @@ async function handleQueueRequest(combat, combatantId, sideHint) {
   if (sideHint && sideHint !== side) return;
 
   const allowPlayers = plan.allowPlayers;
-  const doc = combat.combatants?.get(entry.id) ?? entry.doc ?? null;
-  const actor = doc?.actor ?? null;
-  const isOwner = doc?.isOwner ?? actor?.isOwner ?? false;
   const queueState = plan.state.queue ?? emptyQueue();
   const sanitized = sanitizeEntry(entry, queueState[side]);
   const currentDoc = combat.combatant ?? null;
@@ -2357,7 +2433,7 @@ async function handleQueueRequest(combat, combatantId, sideHint) {
   const effectiveNextSide = plan.display.nextSide;
 
   const combatStarted = !!combat.started;
-  if (!canQueueEntry({ ...sanitized, isOwner }, effectiveNextSide, currentSide, allowPlayers, { combatStarted })) {
+  if (!canQueueEntry(sanitized, effectiveNextSide, currentSide, allowPlayers, { combatStarted })) {
     ui.notifications.warn("That combatant cannot be queued right now.");
     return;
   }
@@ -2371,7 +2447,7 @@ async function handleQueueRequest(combat, combatantId, sideHint) {
       ui.notifications.warn("Only the GM may adjust the PC queue.");
       return;
     }
-    if (!isOwner) {
+    if (!sanitized.canControl) {
       ui.notifications.warn("You do not control that combatant.");
       return;
     }
@@ -2395,7 +2471,6 @@ async function handleQueueClear(combat, side) {
 
   const entry = plan.entries.find((e) => e.id === queuedId) ?? null;
   const sanitized = entry ? sanitizeEntry(entry, queuedId) : null;
-  const isOwner = sanitized?.isOwner ?? entry?.doc?.isOwner ?? entry?.doc?.actor?.isOwner ?? false;
   const currentDoc = combat.combatant ?? null;
   const currentSide = currentDoc ? (isPC(currentDoc) ? "pc" : "npc") : null;
 
@@ -2408,7 +2483,7 @@ async function handleQueueClear(combat, side) {
       ui.notifications.warn("Only the GM may clear the PC queue.");
       return;
     }
-    if (!isOwner) {
+    if (!sanitized?.canControl) {
       ui.notifications.warn("You do not control that combatant.");
       return;
     }
@@ -2508,9 +2583,9 @@ async function handleEndTurn(combat, combatantId) {
 
   const allowPlayers = game.settings.get(MODULE_ID, "playersCanAdvance");
   const currentIsPC = isPC(current);
-  const currentIsOwner = current.isOwner ?? current.actor?.isOwner ?? false;
+  const { canControl: currentCanControl } = computeEntryPermissions(current, current.actor, current);
 
-  if (!game.user.isGM && !(allowPlayers && currentIsPC && currentIsOwner)) {
+  if (!game.user.isGM && !(allowPlayers && currentIsPC && currentCanControl)) {
     ui.notifications.warn("You cannot end this activation.");
     return;
   }

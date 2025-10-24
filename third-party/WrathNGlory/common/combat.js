@@ -5,7 +5,24 @@ export class WrathAndGloryCombat extends Combat {
         this.updateSource({"turn" : null})
     }
     async startCombat() {
-        return this.update({round: 1}); // Don't update turn, that must be chosen
+        const ownership = foundry.utils.duplicate(this.ownership ?? {});
+        let ownershipChanged = false;
+
+        if (game?.users) {
+            for (const user of game.users) {
+                if (user.isGM) continue;
+                if (ownership[user.id] === CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER) continue;
+                ownership[user.id] = CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER;
+                ownershipChanged = true;
+            }
+        }
+
+        const updateData = {round: 1}; // Don't update turn, that must be chosen
+        if (ownershipChanged) {
+            updateData.ownership = ownership;
+        }
+
+        return this.update(updateData);
     }
 
     async setTurn(combatantId) 
