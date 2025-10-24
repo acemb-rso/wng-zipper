@@ -77,6 +77,8 @@ function getLibWrapper() {
 
   cachedLibWrapper = null;
   return cachedLibWrapper;
+}
+
 function extractErrorDetail(err) {
   const seen = new Set();
   let current = err;
