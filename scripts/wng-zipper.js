@@ -58,25 +58,66 @@ let cachedLibWrapper = undefined;
 // attributed to this module when debugging alongside other packages.
 const log = (...args) => console.log(`[%c${MODULE_ID}%c]`, "color:#2ea043", "color:inherit", ...args);
 
-// Resolve the libWrapper singleton without importing vendor copies from third-party/
-// so Foundry's dependency loader remains the single source of truth.
-function getLibWrapper() {
-  if (cachedLibWrapper !== undefined) {
-    return cachedLibWrapper;
-  }
+function extractErrorDetail(err) {
+  const seen = new Set();
+  let current = err;
+  while (current && !seen.has(current)) {
+    seen.add(current);
 
-  try {
-    const lw = globalThis?.libWrapper ?? null;
-    if (lw && typeof lw.register === "function" && typeof lw.unregister === "function") {
-      cachedLibWrapper = lw;
-      return cachedLibWrapper;
+    if (typeof current === "string") {
+      return current;
     }
-  } catch (err) {
-    log(err);
+
+    if (current instanceof Error) {
+      const message = typeof current.message === "string" ? current.message.trim() : "";
+      if (message) return message;
+      current = current.cause ?? null;
+      continue;
+    }
+
+    const message = typeof current?.message === "string" ? current.message.trim() : "";
+    if (message) return message;
+
+    current = current?.cause ?? null;
   }
 
-  cachedLibWrapper = null;
-  return cachedLibWrapper;
+  return "";
+}
+
+function createEnrichedError(base, err) {
+  const detail = extractErrorDetail(err).trim();
+  const message = detail ? `${base} ${detail}` : `${base} See console for details.`;
+  const enriched = new Error(message);
+
+  if (err instanceof Error && err.stack) {
+    enriched.stack = err.stack;
+  }
+
+  if (err !== undefined) {
+    try {
+      enriched.cause = err;
+    } catch (causeError) {
+      // Older environments may not allow assigning cause; ignore.
+    }
+  }
+
+  return { detail, message, enriched };
+}
+
+function reportDockActionFailure(err, { action = "dock action" } = {}) {
+  const base = `Zipper ${action} failed.`;
+  const { message, enriched } = createEnrichedError(base, err);
+
+  if (err !== undefined) {
+    console.error(`[%c${MODULE_ID}%c] ${message}`, "color:#2ea043", "color:inherit", err);
+  } else {
+    console.error(`[%c${MODULE_ID}%c] ${message}`, "color:#2ea043", "color:inherit");
+  }
+
+  const notify = ui?.notifications?.error ?? null;
+  if (!notify) return;
+
+  notify.call(ui.notifications, enriched);
 }
 
 function canPersistDockSettings() {
@@ -497,8 +538,29 @@ async function persistQueuedChoices(combat, queue) {
     await sendSocketRequest("queue:set", { combatId: combat.id, queue: normalized });
     return normalized;
   } catch (err) {
+    const { enriched } = createEnrichedError("Failed to update the queued combatant.", err);
+    throw enriched;
+  }
+}
+
+async function advanceCombatTurn(combat, { bypassPrompt = false } = {}) {
+  if (!combat) return;
+
+  if (game.user?.isGM) {
+    if (bypassPrompt) queuePromptBypass.add(combat.id);
+    try {
+      await combat.nextTurn();
+    } finally {
+      if (bypassPrompt) queuePromptBypass.delete(combat.id);
+    }
+    return;
+  }
+
+  try {
+    await sendSocketRequest("combat:nextTurn", { combatId: combat.id, bypassPrompt });
+  } catch (err) {
     log(err);
-    ui.notifications?.error?.("Failed to update the queued combatant. Please ask the GM to try again.");
+    ui.notifications?.error?.("Failed to advance the turn. Please ask the GM to try again.");
     throw err;
   }
 }
@@ -1851,6 +1913,27 @@ async function buildDockContext(combat) {
   };
 }
 
+function describeDockAction(action) {
+  switch (action) {
+    case "toggle-module":
+      return "module toggle";
+    case "activate":
+      return "activation request";
+    case "queue":
+      return "queue update";
+    case "queue-clear":
+      return "queue clear";
+    case "end-turn":
+      return "end turn request";
+    case "reset-round":
+      return "round reset";
+    case "advance-round":
+      return "round advance";
+    default:
+      return "dock action";
+  }
+}
+
 function bindDockListeners(wrapper) {
   // Centralized event delegation for the dock. This keeps us from wiring and
   // unwiring dozens of individual listeners when the template re-renders.
@@ -1894,8 +1977,7 @@ function bindDockListeners(wrapper) {
           break;
       }
     } catch (err) {
-      log(err);
-      ui.notifications.error("Zipper dock action failed. See console for details.");
+      reportDockActionFailure(err, { action: describeDockAction(action) });
     }
   });
 }
