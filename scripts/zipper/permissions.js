@@ -32,6 +32,10 @@ export const hasDocumentPermission = (doc, level) => {
   const ownership = doc.ownership ?? doc.permission ?? null;
   if (!ownership) return false;
 
+  if (Number.isFinite(ownership)) {
+    return ownership >= level;
+  }
+
   const userId = game.user.id;
   let value = ownership[userId];
   if (!Number.isFinite(value)) value = ownership.default;
