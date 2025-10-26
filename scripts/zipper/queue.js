@@ -160,20 +160,22 @@ export async function persistQueuedChoices(combat, queue) {
   const normalized = cloneQueueState(queue);
   if (!combat) return normalized;
 
-  if (game.user.isGM || hasDocumentPermission(combat, OWNER_LEVEL)) {
-    try {
-      await applyQueuedChoiceFlags(combat, normalized);
-      return normalized;
-    } catch (err) {
-      if (game.user.isGM) throw err;
-      log(err);
-    }
+  const isOwner = game.user.isGM || hasDocumentPermission(combat, OWNER_LEVEL);
+  let directError = null;
+
+  try {
+    await applyQueuedChoiceFlags(combat, normalized);
+    return normalized;
+  } catch (err) {
+    directError = err;
+    if (isOwner) throw err;
   }
 
   try {
     await sendSocketRequest("queue:set", { combatId: combat.id, queue: normalized });
     return normalized;
   } catch (err) {
+    if (directError) log(directError);
     const { enriched } = createEnrichedError("Failed to update the queued combatant.", err);
     throw enriched;
   }
@@ -201,6 +203,66 @@ export async function readQueuedChoices(combat, entries = []) {
     if (game.user.isGM) {
       await persistQueuedChoices(combat, queue);
       await combat.unsetFlag(MODULE_ID, MANUAL_CHOICE_FLAG);
+    }
+  }
+
+  const mappedEntries = new Map();
+  if (Array.isArray(entries)) {
+    for (const entry of entries) {
+      if (!entry?.id) continue;
+      mappedEntries.set(entry.id, entry);
+    }
+  }
+
+  if (!mappedEntries.size && combat?.combatants) {
+    const combatants = combat.combatants;
+    if (typeof combatants?.forEach === "function") {
+      combatants.forEach((value) => {
+        if (!value?.id) return;
+        mappedEntries.set(value.id, value);
+      });
+    } else if (Array.isArray(combatants)) {
+      for (const entry of combatants) {
+        if (!entry?.id) continue;
+        mappedEntries.set(entry.id, entry);
+      }
+    }
+  }
+
+  let dirty = false;
+
+  for (const side of ["pc", "npc"]) {
+    const queuedId = queue[side];
+    if (!queuedId) continue;
+
+    const entry = mappedEntries.get(queuedId) ?? null;
+    if (!entry) {
+      queue = { ...queue, [side]: null };
+      dirty = true;
+      continue;
+    }
+
+    const entrySide = entry.side ?? (isPC(entry) ? "pc" : "npc");
+    if (entrySide !== side) {
+      queue = { ...queue, [side]: null };
+      dirty = true;
+      continue;
+    }
+
+    const defeated = entry.isDefeated ?? entry.defeated ?? false;
+    const acted = entry.acted ?? false;
+    const complete = entry.isComplete === true || isCombatantComplete(entry, combat);
+    if (defeated || acted || complete) {
+      queue = { ...queue, [side]: null };
+      dirty = true;
+    }
+  }
+
+  if (dirty) {
+    try {
+      await persistQueuedChoices(combat, queue);
+    } catch (err) {
+      log(err);
     }
   }
 
