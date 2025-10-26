@@ -153,7 +153,9 @@ export const canActivateEntry = (entry, nextSide, allowPlayers) => {
   if (!entry) return false;
   if (nextSide && entry.side !== nextSide) return false;
   if (entry.side === "npc") return game.user.isGM;
-  return game.user.isGM || allowPlayers;
+  if (game.user.isGM) return true;
+  if (typeof entry.canControl === "boolean") return entry.canControl;
+  return !!allowPlayers;
 };
 
 export const canQueueEntry = (entry, nextSide, currentSide, allowPlayers, { combatStarted = true } = {}) => {
