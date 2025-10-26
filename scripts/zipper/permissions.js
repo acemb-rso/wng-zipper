@@ -32,6 +32,10 @@ export const hasDocumentPermission = (doc, level) => {
   const ownership = doc.ownership ?? doc.permission ?? null;
   if (!ownership) return false;
 
+  if (Number.isFinite(ownership)) {
+    return ownership >= level;
+  }
+
   const userId = game.user.id;
   let value = ownership[userId];
   if (!Number.isFinite(value)) value = ownership.default;
@@ -48,6 +52,11 @@ export const computeEntryPermissions = (doc, actor, fallback = {}) => {
   let isOwner = fallbackOwner;
   let canControl = fallback.canControl ?? fallbackOwner;
 
+  const docOwner = hasDocumentPermission(doc, OWNER_LEVEL);
+  const docObserver = hasDocumentPermission(doc, OBSERVER_LEVEL);
+  const actorOwner = hasDocumentPermission(actor, OWNER_LEVEL);
+  const actorObserver = hasDocumentPermission(actor, OBSERVER_LEVEL);
+
   try {
     if (!isOwner && doc?.isOwner) isOwner = true;
   } catch {
@@ -60,18 +69,18 @@ export const computeEntryPermissions = (doc, actor, fallback = {}) => {
     // Ignore
   }
 
-  if (!isOwner && hasDocumentPermission(doc, OWNER_LEVEL)) {
+  if (!isOwner && docOwner) {
     isOwner = true;
   }
 
-  if (!isOwner && hasDocumentPermission(actor, OWNER_LEVEL)) {
+  if (!isOwner && actorOwner) {
     isOwner = true;
   }
 
   if (!canControl) {
     if (isOwner) {
       canControl = true;
-    } else if (hasDocumentPermission(doc, OBSERVER_LEVEL)) {
+    } else if (docObserver) {
       canControl = true;
     } else {
       let actorHasPlayerOwner = false;
@@ -81,7 +90,7 @@ export const computeEntryPermissions = (doc, actor, fallback = {}) => {
         actorHasPlayerOwner = false;
       }
 
-      if (actorHasPlayerOwner && hasDocumentPermission(actor, OBSERVER_LEVEL)) {
+      if (actorHasPlayerOwner && actorObserver) {
         canControl = true;
       }
     }
