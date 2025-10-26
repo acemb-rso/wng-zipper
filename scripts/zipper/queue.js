@@ -1,12 +1,13 @@
 import {
   MANUAL_CHOICE_FLAG,
   MODULE_ID,
+  OWNER_LEVEL,
   QUEUED_CHOICES_FLAG,
   SOCKET_EVENT,
   SOCKET_TIMEOUT_MS
 } from "./constants.js";
 import { createEnrichedError, log } from "./utils.js";
-import { isCombatantComplete, isPC } from "./permissions.js";
+import { hasDocumentPermission, isCombatantComplete, isPC } from "./permissions.js";
 
 const pendingSocketRequests = new Map();
 let socketBridgeInitialized = false;
@@ -159,9 +160,14 @@ export async function persistQueuedChoices(combat, queue) {
   const normalized = cloneQueueState(queue);
   if (!combat) return normalized;
 
-  if (game.user.isGM) {
-    await applyQueuedChoiceFlags(combat, normalized);
-    return normalized;
+  if (game.user.isGM || hasDocumentPermission(combat, OWNER_LEVEL)) {
+    try {
+      await applyQueuedChoiceFlags(combat, normalized);
+      return normalized;
+    } catch (err) {
+      if (game.user.isGM) throw err;
+      log(err);
+    }
   }
 
   try {
