@@ -682,12 +682,12 @@ export async function handleManualActivation(combat, combatantId) {
       ui.notifications.warn("You cannot control that combatant.");
       return;
     }
-    if (!allowPlayers) {
-      ui.notifications.warn("Only the GM may choose that combatant.");
-      return;
-    }
     if (!sanitized.canControl) {
       ui.notifications.warn("You do not control that combatant.");
+      return;
+    }
+    if (mode === "queue" && !allowPlayers) {
+      ui.notifications.warn("Only the GM may choose that combatant.");
       return;
     }
     if (mode === "activate") {
