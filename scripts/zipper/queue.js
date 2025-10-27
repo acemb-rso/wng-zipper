@@ -76,6 +76,20 @@ async function processSocketAction(action, data = {}) {
       await applyQueuedChoiceFlags(combat, queue);
       return { queue };
     }
+    case "combat:nextTurn": {
+      const combatId = data?.combatId ?? null;
+      if (!combatId) throw new Error("Missing combat identifier.");
+      const combat = resolveCombatById(combatId);
+      if (!combat) throw new Error("Combat not found.");
+      const bypassQueuePrompt = data?.bypassQueuePrompt === true;
+      if (bypassQueuePrompt) queuePromptBypass.add(combatId);
+      try {
+        await combat.nextTurn();
+      } finally {
+        if (bypassQueuePrompt) queuePromptBypass.delete(combatId);
+      }
+      return {};
+    }
     default:
       throw new Error(`Unknown socket action: ${action}`);
   }
@@ -161,24 +175,49 @@ export async function persistQueuedChoices(combat, queue) {
   if (!combat) return normalized;
 
   const isOwner = game.user.isGM || hasDocumentPermission(combat, OWNER_LEVEL);
-  let directError = null;
-
-  try {
+  if (isOwner) {
     await applyQueuedChoiceFlags(combat, normalized);
     return normalized;
-  } catch (err) {
-    directError = err;
-    if (isOwner) throw err;
   }
 
   try {
     await sendSocketRequest("queue:set", { combatId: combat.id, queue: normalized });
     return normalized;
   } catch (err) {
-    if (directError) log(directError);
     const { enriched } = createEnrichedError("Failed to update the queued combatant.", err);
     throw enriched;
   }
+}
+
+export async function advanceCombatTurn(combat, { bypassQueuePrompt = false } = {}) {
+  if (!combat) return;
+
+  const combatId = combat.id;
+  const bypass = bypassQueuePrompt === true;
+  const performNextTurn = async () => {
+    if (bypass && combatId) queuePromptBypass.add(combatId);
+    try {
+      await combat.nextTurn();
+    } finally {
+      if (bypass && combatId) queuePromptBypass.delete(combatId);
+    }
+  };
+
+  const isOwner = game.user.isGM || hasDocumentPermission(combat, OWNER_LEVEL);
+  if (isOwner) {
+    await performNextTurn();
+    return;
+  }
+
+  if (bypass && combatId) queuePromptBypass.add(combatId);
+  try {
+    await sendSocketRequest("combat:nextTurn", { combatId, bypassQueuePrompt: bypass });
+  } catch (err) {
+    if (bypass && combatId) queuePromptBypass.delete(combatId);
+    const { enriched } = createEnrichedError("Failed to advance the turn.", err);
+    throw enriched;
+  }
+  if (bypass && combatId) queuePromptBypass.delete(combatId);
 }
 
 export async function readQueuedChoices(combat, entries = []) {
