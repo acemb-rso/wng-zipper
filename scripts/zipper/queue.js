@@ -149,6 +149,50 @@ function handleSocketResponse(payload = {}) {
   }
 }
 
+async function applyImmediateActivation(combat, combatantId, sideHint = null) {
+  if (!combat) throw new Error("Combat not found.");
+  if (!combatantId) throw new Error("Missing combatant identifier.");
+
+  const doc = combat.combatants?.get?.(combatantId) ?? null;
+  if (!doc) throw new Error("Combatant not found.");
+
+  const enabled = await combat.getFlag(MODULE_ID, "enabled");
+  let side = sideHint;
+  if (!["pc", "npc"].includes(side)) {
+    side = isPC(doc) ? "pc" : "npc";
+  }
+
+  if (enabled) {
+    if (side) {
+      try {
+        await combat.setFlag(MODULE_ID, "currentSide", side);
+      } catch (err) {
+        log(err);
+      }
+    }
+
+    try {
+      const queueState = cloneQueueState(await combat.getFlag(MODULE_ID, QUEUED_CHOICES_FLAG));
+      if (side && queueState?.[side] === combatantId) {
+        const updated = { ...queueState, [side]: null };
+        await applyQueuedChoiceFlags(combat, updated);
+      }
+    } catch (err) {
+      log(err);
+    }
+  }
+
+  if (typeof combat.setTurn === "function") {
+    await combat.setTurn(combatantId);
+  } else {
+    const idx = combat.turns.findIndex((c) => c.id === combatantId);
+    if (idx < 0) throw new Error("Combatant missing from turn order.");
+    await combat.update({ turn: idx });
+  }
+
+  return { side };
+}
+
 export async function applyQueuedChoiceFlags(combat, queue) {
   const normalized = cloneQueueState(queue);
   if (!combat) return normalized;
@@ -185,6 +229,14 @@ async function processSocketAction(action, data = {}) {
         if (bypassQueuePrompt) queuePromptBypass.delete(combatId);
       }
       return {};
+    }
+    case "combat:setTurn": {
+      const combatId = data?.combatId ?? null;
+      const combatantId = data?.combatantId ?? null;
+      if (!combatId) throw new Error("Missing combat identifier.");
+      const combat = resolveCombatById(combatId);
+      if (!combat) throw new Error("Combat not found.");
+      return applyImmediateActivation(combat, combatantId, data?.side ?? null);
     }
     default:
       throw new Error(`Unknown socket action: ${action}`);
@@ -356,6 +408,35 @@ export async function advanceCombatTurn(combat, { bypassQueuePrompt = false } = 
     throw enriched;
   } finally {
     if (bypass && combatId) queuePromptBypass.delete(combatId);
+  }
+}
+
+export async function activateCombatant(combat, combatantId, { side = null } = {}) {
+  if (!combat || !combatantId) return;
+
+  const combatId = combat.id;
+  const performActivation = () => applyImmediateActivation(combat, combatantId, side);
+
+  const isOwner = game.user.isGM || hasDocumentPermission(combat, OWNER_LEVEL);
+  if (isOwner) {
+    await performActivation();
+    return;
+  }
+
+  try {
+    await sendSocketRequest("combat:setTurn", { combatId, combatantId, side });
+    return;
+  } catch (err) {
+    log(err);
+    if (broadcastSocketAction("combat:setTurn", { combatId, combatantId, side })) {
+      if (ui?.notifications?.warn) {
+        ui.notifications.warn("Activation requested. Waiting for a GM to confirm.");
+      }
+      return;
+    }
+
+    const { enriched } = createEnrichedError("Failed to activate the combatant.", err);
+    throw enriched;
   }
 }
 

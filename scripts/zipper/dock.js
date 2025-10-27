@@ -10,6 +10,7 @@ import {
 import {
   ensurePlayersLead,
   evaluateZipperState,
+  activateCombatant,
   advanceCombatTurn,
   queuePromptBypass,
   emptyQueue,
@@ -710,8 +711,12 @@ export async function handleManualActivation(combat, combatantId) {
     return;
   }
 
-  await updateQueuedChoice(combat, side, combatantId);
-  await advanceCombatTurn(combat);
+  if (!currentId) {
+    await activateCombatant(combat, combatantId, { side });
+  } else {
+    await updateQueuedChoice(combat, side, combatantId);
+    await advanceCombatTurn(combat, { bypassQueuePrompt: true });
+  }
   ui.combat.render(true);
   requestDockRender();
 }
