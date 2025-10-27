@@ -3,7 +3,8 @@
 All notable changes to **wng-zipper** will be documented in this file. The project adheres loosely to [Semantic Versioning](https://semver.org/) and the dates follow ISO-8601 format (YYYY-MM-DD).
 
 ## [Unreleased]
-- _No changes yet._
+- Enabled the module socket channel so players can keep using the GM bridge for
+  queue updates and other multiplayer coordination.
 
 ## [0.12.5a] - 2025-10-27
 ### Added
