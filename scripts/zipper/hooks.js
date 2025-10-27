@@ -288,6 +288,16 @@ function registerCombatWrappers() {
   });
 }
 
+function registerSocketAvailabilityWarning() {
+  Hooks.once("ready", () => {
+    if (game.socket) return;
+    console.error(`[${MODULE_ID}] Socket system unavailable! Player actions will fail.`);
+    if (game.user?.isGM) {
+      ui.notifications.error("WNG Zipper: Socket system unavailable. Player actions will not work!");
+    }
+  });
+}
+
 function registerDockHooks() {
   Hooks.on("renderCombatTracker", () => {
     requestDockRender();
@@ -315,5 +325,6 @@ export function registerHooks() {
   registerHeaderButtonHook();
   registerCombatLifecycleHooks();
   registerCombatWrappers();
+  registerSocketAvailabilityWarning();
   registerDockHooks();
 }
