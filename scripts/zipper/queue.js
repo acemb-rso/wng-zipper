@@ -13,6 +13,9 @@ const pendingSocketRequests = new Map();
 let socketBridgeInitialized = false;
 let socketBridgeRetryTimer = null;
 
+const LOCAL_OVERRIDE_TTL_MS = 60000;
+const localQueueOverrides = new Map();
+
 export const queuePromptBypass = new Set();
 
 export const emptyQueue = () => ({ pc: null, npc: null });
@@ -23,6 +26,99 @@ export const cloneQueueState = (queue) => ({
 });
 
 export const isQueueEmpty = (queue) => !(queue?.pc || queue?.npc);
+
+function normalizeQueueValue(value) {
+  if (typeof value === "string" && value.length) return value;
+  return null;
+}
+
+function pruneLocalQueueOverrides() {
+  if (!localQueueOverrides.size) return;
+  const now = Date.now();
+  for (const [combatId, entry] of localQueueOverrides) {
+    if (!entry) {
+      localQueueOverrides.delete(combatId);
+      continue;
+    }
+    const expiry = Number(entry.expiresAt);
+    if (Number.isFinite(expiry) && expiry <= now) {
+      localQueueOverrides.delete(combatId);
+    }
+  }
+}
+
+function setLocalQueueOverride(combatId, queue, changedSides = []) {
+  if (!combatId) return;
+  const sides = Array.isArray(changedSides) && changedSides.length ? changedSides : ["pc", "npc"];
+  const overrides = {};
+  for (const side of sides) {
+    if (!["pc", "npc"].includes(side)) continue;
+    overrides[side] = normalizeQueueValue(queue?.[side]);
+  }
+  if (!Object.keys(overrides).length) return;
+
+  pruneLocalQueueOverrides();
+  const existing = localQueueOverrides.get(combatId) ?? { queue: {}, expiresAt: 0 };
+  existing.queue = { ...existing.queue, ...overrides };
+  existing.expiresAt = Date.now() + LOCAL_OVERRIDE_TTL_MS;
+  localQueueOverrides.set(combatId, existing);
+}
+
+function clearLocalQueueOverride(combatId, changedSides = []) {
+  if (!combatId) return;
+  if (!localQueueOverrides.size) return;
+  if (!Array.isArray(changedSides) || !changedSides.length) {
+    localQueueOverrides.delete(combatId);
+    return;
+  }
+
+  const entry = localQueueOverrides.get(combatId);
+  if (!entry) return;
+  for (const side of changedSides) {
+    delete entry.queue?.[side];
+  }
+  if (!entry.queue || !Object.keys(entry.queue).length) {
+    localQueueOverrides.delete(combatId);
+    return;
+  }
+  entry.expiresAt = Date.now() + LOCAL_OVERRIDE_TTL_MS;
+  localQueueOverrides.set(combatId, entry);
+}
+
+function applyLocalQueueOverride(combatId, queue) {
+  if (!combatId) return queue;
+  pruneLocalQueueOverrides();
+  const entry = localQueueOverrides.get(combatId);
+  if (!entry?.queue) return queue;
+  const overrides = entry.queue;
+  let shouldOverlay = false;
+  for (const [side, value] of Object.entries(overrides)) {
+    if (!["pc", "npc"].includes(side)) continue;
+    const desired = normalizeQueueValue(value);
+    const actual = normalizeQueueValue(queue?.[side]);
+    if (desired === actual) continue;
+
+    if (desired === null || actual === null) {
+      shouldOverlay = true;
+      continue;
+    }
+
+    localQueueOverrides.delete(combatId);
+    return queue;
+  }
+
+  if (!shouldOverlay) {
+    localQueueOverrides.delete(combatId);
+    return queue;
+  }
+
+  const augmented = { ...queue };
+  for (const [side, value] of Object.entries(overrides)) {
+    if (!["pc", "npc"].includes(side)) continue;
+    augmented[side] = normalizeQueueValue(value);
+  }
+  return augmented;
+}
 
 export function resolveCombatById(combatId) {
   if (!combatId) return null;
@@ -76,6 +172,20 @@ async function processSocketAction(action, data = {}) {
       await applyQueuedChoiceFlags(combat, queue);
       return { queue };
     }
+    case "combat:nextTurn": {
+      const combatId = data?.combatId ?? null;
+      if (!combatId) throw new Error("Missing combat identifier.");
+      const combat = resolveCombatById(combatId);
+      if (!combat) throw new Error("Combat not found.");
+      const bypassQueuePrompt = data?.bypassQueuePrompt === true;
+      if (bypassQueuePrompt) queuePromptBypass.add(combatId);
+      try {
+        await combat.nextTurn();
+      } finally {
+        if (bypassQueuePrompt) queuePromptBypass.delete(combatId);
+      }
+      return {};
+    }
     default:
       throw new Error(`Unknown socket action: ${action}`);
   }
@@ -103,6 +213,28 @@ export async function sendSocketRequest(action, data = {}, { timeout = SOCKET_TI
     pendingSocketRequests.set(requestId, { resolve, reject, timeoutId });
     game.socket.emit(SOCKET_EVENT, payload);
   });
+}
+
+function broadcastSocketAction(action, data = {}) {
+  try {
+    if (!socketBridgeInitialized) registerSocketBridge();
+  } catch (err) {
+    log(err);
+  }
+
+  const socket = game.socket;
+  if (!socket) return false;
+
+  const hasActiveGm = game.users?.some?.((u) => u?.isGM && u.active);
+  if (!hasActiveGm) return false;
+
+  socket.emit(SOCKET_EVENT, {
+    action,
+    data,
+    userId: game.user?.id ?? null,
+    fallback: true
+  });
+  return true;
 }
 
 export function registerSocketBridge() {
@@ -156,28 +288,74 @@ export function registerSocketBridge() {
   });
 }
 
-export async function persistQueuedChoices(combat, queue) {
+export async function persistQueuedChoices(combat, queue, { changedSides = [] } = {}) {
   const normalized = cloneQueueState(queue);
   if (!combat) return normalized;
 
   const isOwner = game.user.isGM || hasDocumentPermission(combat, OWNER_LEVEL);
-  let directError = null;
-
-  try {
+  if (isOwner) {
     await applyQueuedChoiceFlags(combat, normalized);
+    clearLocalQueueOverride(combat.id, changedSides);
     return normalized;
-  } catch (err) {
-    directError = err;
-    if (isOwner) throw err;
   }
 
   try {
     await sendSocketRequest("queue:set", { combatId: combat.id, queue: normalized });
+    clearLocalQueueOverride(combat.id, changedSides);
     return normalized;
   } catch (err) {
-    if (directError) log(directError);
-    const { enriched } = createEnrichedError("Failed to update the queued combatant.", err);
+    log(err);
+    setLocalQueueOverride(combat.id, normalized, changedSides);
+    if (broadcastSocketAction("queue:set", { combatId: combat.id, queue: normalized })) {
+      if (ui?.notifications?.warn) {
+        ui.notifications.warn("Zipper queue request sent to the GM. Waiting for their response.");
+      }
+      return normalized;
+    }
+
+    if (ui?.notifications?.warn) {
+      ui.notifications.warn("No active GM could be reached. Your queue choice is saved locally until one is available.");
+    }
+    return normalized;
+  }
+}
+
+export async function advanceCombatTurn(combat, { bypassQueuePrompt = false } = {}) {
+  if (!combat) return;
+
+  const combatId = combat.id;
+  const bypass = bypassQueuePrompt === true;
+  const performNextTurn = async () => {
+    if (bypass && combatId) queuePromptBypass.add(combatId);
+    try {
+      await combat.nextTurn();
+    } finally {
+      if (bypass && combatId) queuePromptBypass.delete(combatId);
+    }
+  };
+
+  const isOwner = game.user.isGM || hasDocumentPermission(combat, OWNER_LEVEL);
+  if (isOwner) {
+    await performNextTurn();
+    return;
+  }
+
+  if (bypass && combatId) queuePromptBypass.add(combatId);
+  try {
+    await sendSocketRequest("combat:nextTurn", { combatId, bypassQueuePrompt: bypass });
+    return;
+  } catch (err) {
+    log(err);
+    if (broadcastSocketAction("combat:nextTurn", { combatId, bypassQueuePrompt: bypass })) {
+      if (ui?.notifications?.warn) {
+        ui.notifications.warn("Turn advance requested. Waiting for a GM to confirm.");
+      }
+      return;
+    }
+    const { enriched } = createEnrichedError("Failed to advance the turn.", err);
     throw enriched;
+  } finally {
+    if (bypass && combatId) queuePromptBypass.delete(combatId);
   }
 }
 
@@ -187,6 +365,7 @@ export async function readQueuedChoices(combat, entries = []) {
 
   const legacy = await combat.getFlag(MODULE_ID, MANUAL_CHOICE_FLAG);
   if (legacy) {
+    const legacyChanged = new Set();
     let side = null;
     const entry = entries.find((e) => e.id === legacy);
     if (entry) {
@@ -198,10 +377,13 @@ export async function readQueuedChoices(combat, entries = []) {
 
     if (side && !queue[side]) {
       queue = { ...queue, [side]: legacy };
+      legacyChanged.add(side);
     }
 
     if (game.user.isGM) {
-      await persistQueuedChoices(combat, queue);
+      if (legacyChanged.size) {
+        await persistQueuedChoices(combat, queue, { changedSides: Array.from(legacyChanged) });
+      }
       await combat.unsetFlag(MODULE_ID, MANUAL_CHOICE_FLAG);
     }
   }
@@ -230,6 +412,7 @@ export async function readQueuedChoices(combat, entries = []) {
   }
 
   let dirty = false;
+  const dirtySides = new Set();
 
   for (const side of ["pc", "npc"]) {
     const queuedId = queue[side];
@@ -239,6 +422,7 @@ export async function readQueuedChoices(combat, entries = []) {
     if (!entry) {
       queue = { ...queue, [side]: null };
       dirty = true;
+      dirtySides.add(side);
       continue;
     }
 
@@ -246,6 +430,7 @@ export async function readQueuedChoices(combat, entries = []) {
     if (entrySide !== side) {
       queue = { ...queue, [side]: null };
       dirty = true;
+      dirtySides.add(side);
       continue;
     }
 
@@ -255,18 +440,19 @@ export async function readQueuedChoices(combat, entries = []) {
     if (defeated || acted || complete) {
       queue = { ...queue, [side]: null };
       dirty = true;
+      dirtySides.add(side);
     }
   }
 
   if (dirty) {
     try {
-      await persistQueuedChoices(combat, queue);
+      await persistQueuedChoices(combat, queue, { changedSides: Array.from(dirtySides) });
     } catch (err) {
       log(err);
     }
   }
 
-  return queue;
+  return applyLocalQueueOverride(combat.id, queue);
 }
 
 export async function updateQueuedChoice(combat, side, combatantId) {
@@ -275,7 +461,7 @@ export async function updateQueuedChoice(combat, side, combatantId) {
   const nextId = combatantId ?? null;
   if (current[side] === nextId) return current;
   const next = { ...current, [side]: nextId };
-  await persistQueuedChoices(combat, next);
+  await persistQueuedChoices(combat, next, { changedSides: [side] });
   return next;
 }
 
@@ -283,19 +469,23 @@ export async function clearQueuedChoice(combat, side = null) {
   if (!combat) return;
   const current = await readQueuedChoices(combat);
   let changed = false;
+  const changedSides = new Set();
 
   if (side && ["pc", "npc"].includes(side)) {
     if (current[side]) {
       current[side] = null;
       changed = true;
+      changedSides.add(side);
     }
   } else if (current.pc || current.npc) {
     current.pc = null;
     current.npc = null;
     changed = true;
+    changedSides.add("pc");
+    changedSides.add("npc");
   }
 
-  if (changed) await persistQueuedChoices(combat, current);
+  if (changed) await persistQueuedChoices(combat, current, { changedSides: Array.from(changedSides) });
 }
 
 export function cloneDisplayGroup(group) {

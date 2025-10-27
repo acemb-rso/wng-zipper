@@ -10,6 +10,7 @@ import {
 import {
   ensurePlayersLead,
   evaluateZipperState,
+  advanceCombatTurn,
   queuePromptBypass,
   emptyQueue,
   cloneDisplayGroup,
@@ -710,7 +711,7 @@ export async function handleManualActivation(combat, combatantId) {
   }
 
   await updateQueuedChoice(combat, side, combatantId);
-  await combat.nextTurn();
+  await advanceCombatTurn(combat);
   ui.combat.render(true);
   requestDockRender();
 }
@@ -866,7 +867,7 @@ export async function handleResetRound(combat) {
 
 export async function handleEndTurn(combat, combatantId) {
   if (!(await combat.getFlag(MODULE_ID, "enabled"))) {
-    await combat.nextTurn();
+    await advanceCombatTurn(combat);
     ui.combat.render(true);
     requestDockRender();
     return;
@@ -897,14 +898,9 @@ export async function handleEndTurn(combat, combatantId) {
     const outcome = await maybePromptForNextPcQueue(combat, { actingCombatant: current });
     if (outcome.cancelled) return;
     bypassQueuePrompt = true;
-    queuePromptBypass.add(combat.id);
   }
 
-  try {
-    await combat.nextTurn();
-  } finally {
-    if (bypassQueuePrompt) queuePromptBypass.delete(combat.id);
-  }
+  await advanceCombatTurn(combat, { bypassQueuePrompt });
   ui.combat.render(true);
   requestDockRender();
 }
