@@ -24,7 +24,7 @@
   "packs": [],
   "languages": [],
   "media": [],
-  "socket": false,
+  "socket": true,
   "allowBugReporter": true,
   "manifest": "https://raw.githubusercontent.com/acemb-rso/wng-zipper/main/module.json",
   "download": "https://github.com/acemb-rso/wng-zipper/archive/refs/heads/main.zip",
