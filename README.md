@@ -3,7 +3,7 @@
 > Alternate-activation initiative for Wrath & Glory combats inside Foundry VTT.
 
 ## At a Glance
-- **Current release:** 0.10.4
+- **Current release:** 0.12.5a
 - **Foundry VTT:** v11 – v13 (verified on v13)
 - **Wrath & Glory system:** v6+
 
@@ -21,9 +21,13 @@ the alternating turn order, eligible combatants, and who has already acted.
 - 🪟 **Resizable docked tracker** rendered with Handlebars inspired by the combat carousel
   UX while highlighting current, pending, and completed combatants.
 - 🧭 **Queued activations** for both sides so the GM (or eligible players) can line up the
-  next combatant without immediately advancing the turn.
+  next combatant without immediately advancing the turn. Player requests travel through a
+  resilient GM bridge with local fallbacks so limited-permission users can still participate
+  without socket errors.
 - ⚙️ **Quality-of-life automation** that hides defeated or hidden combatants and gracefully
   hands control back to Foundry when the zipper is toggled off.
+- 🛎️ **Round wrap-up prompts** that whisper the GM when everyone is spent, making it easy to
+  start the next round or end combat without hunting through menus.
 - 🧩 **Macro & module API** helpers for inspecting zipper state, advancing combatants, and
   integrating with other automations.
 
@@ -32,6 +36,8 @@ the alternating turn order, eligible combatants, and who has already acted.
 ## Requirements
 - Foundry VTT core version 11–13.
 - Wrath & Glory game system version 6 or newer.
+- The [libWrapper](https://foundryvtt.com/packages/lib-wrapper) module (the bridge is bundled
+  but the dependency must be enabled).
 - A world with at least one active combat encounter (the tracker appears once combat starts).
 
 ---
@@ -50,8 +56,10 @@ the alternating turn order, eligible combatants, and who has already acted.
 3. PCs always lead each round automatically—no priority prompt required.
 4. When several PCs are available, the module prompts the players (or GM) to select who acts.
 5. Queue specific combatants in advance with the dock controls; clear the queue anytime to
-   fall back to the natural alternating order.
+   fall back to the natural alternating order or let the post-turn prompt pick the next PC.
 6. When a round ends, all acted markers reset and the next cycle begins with the PCs again.
+7. Once both sides are out of eligible combatants, the module whispers the GM with a prompt
+   to advance the round immediately or end combat.
 
 The GM can always override the current combatant, advance rounds manually, or disable the
 module mid-combat—`wng-zipper` respects those decisions and resynchronizes automatically.
@@ -82,8 +90,8 @@ sizes and supports drag-resizing when pinned.
 ## API & Macros
 Developers can import helpers from `game.modules.get('wng-zipper-initiative')?.api` to
 inspect current zipper state, programmatically queue combatants, or advance turns in sync with
-the module's alternating logic. See the `scripts/wng-zipper.js` source for the full surface
-area and examples of the available methods.
+the module's alternating logic. See `scripts/zipper/api.js` for the full surface area and
+examples of the available methods.
 
 ---
 

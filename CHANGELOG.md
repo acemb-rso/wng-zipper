@@ -3,11 +3,32 @@
 All notable changes to **wng-zipper** will be documented in this file. The project adheres loosely to [Semantic Versioning](https://semver.org/) and the dates follow ISO-8601 format (YYYY-MM-DD).
 
 ## [Unreleased]
+- _No changes yet._
+
+## [0.12.5a] - 2025-10-27
 ### Added
-- Prompt the GM when all combatants are exhausted so they can immediately start the next round or end combat, whispering the outcome to GM chat for clarity.【F:scripts/wng-zipper.js†L1233-L1299】【F:scripts/wng-zipper.js†L1500-L1529】
+- Routed player queue updates and turn-advance requests through a resilient GM-managed socket
+  bridge with timeout handling and local fallbacks, ensuring limited-permission players can
+  still contribute even when no GM responds immediately.
+- Whisper a "round complete" dialog to GMs whenever both sides run out of eligible
+  combatants so they can jump straight into the next round or end combat with a single click.
+- Prompt PCs that end their turn to pick who should be queued next, keeping the alternating
+  flow moving without manual GM intervention.
+
+### Changed
+- Rebuilt the zipper module into focused files for settings, hooks, combat logic, dock
+  rendering, queue orchestration, and the public API, simplifying maintenance and future
+  extension work.
+- Updated the standalone dock to use pointer-based drag and resize interactions that persist
+  through client settings when possible and fall back to local overrides when players lack
+  configuration permissions.
+
 ### Fixed
-- Wrapped turn advancement through libWrapper and the socket bridge so player end-turn actions execute with GM authority instead of throwing permission errors.【F:scripts/wng-zipper.js†L328-L413】【F:scripts/wng-zipper.js†L474-L520】【F:scripts/wng-zipper.js†L1227-L1313】【F:scripts/wng-zipper.js†L2344-L2413】
-- Ensured the shared `advanceCombatTurn` helper is only defined once so duplicate module evaluations no longer crash with a redeclaration error.【F:scripts/wng-zipper.js†L506-L528】
+- Cleaned up stale queue selections whenever a combatant becomes defeated, completes their
+  activation, or no longer matches the stored side, preventing phantom entries from blocking
+  the next activation.
+- Prevented duplicate queue prompt bypass flags from stacking by scoping them to individual
+  combats during socket-driven turn advances.
 
 ## [0.11.0] - 2025-10-23
 ### Added
