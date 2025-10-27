@@ -12,6 +12,7 @@ import {
   toSideLabel
 } from "./permissions.js";
 import {
+  activateCombatant,
   advanceCombatTurn,
   clearQueuedChoice,
   cloneDisplayGroup,
@@ -563,6 +564,7 @@ export async function maybePromptForNextPcQueue(combat, { actingCombatant = null
 }
 
 export {
+  activateCombatant,
   advanceCombatTurn,
   clearQueuedChoice,
   cloneDisplayGroup,
