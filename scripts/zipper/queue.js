@@ -359,37 +359,6 @@ export async function advanceCombatTurn(combat, { bypassQueuePrompt = false } = 
   }
 }
 
-export async function advanceCombatTurn(combat, { bypassQueuePrompt = false } = {}) {
-  if (!combat) return;
-
-  const combatId = combat.id;
-  const bypass = bypassQueuePrompt === true;
-  const performNextTurn = async () => {
-    if (bypass && combatId) queuePromptBypass.add(combatId);
-    try {
-      await combat.nextTurn();
-    } finally {
-      if (bypass && combatId) queuePromptBypass.delete(combatId);
-    }
-  };
-
-  const isOwner = game.user.isGM || hasDocumentPermission(combat, OWNER_LEVEL);
-  if (isOwner) {
-    await performNextTurn();
-    return;
-  }
-
-  if (bypass && combatId) queuePromptBypass.add(combatId);
-  try {
-    await sendSocketRequest("combat:nextTurn", { combatId, bypassQueuePrompt: bypass });
-  } catch (err) {
-    if (bypass && combatId) queuePromptBypass.delete(combatId);
-    const { enriched } = createEnrichedError("Failed to advance the turn.", err);
-    throw enriched;
-  }
-  if (bypass && combatId) queuePromptBypass.delete(combatId);
-}
-
 export async function readQueuedChoices(combat, entries = []) {
   const raw = await combat.getFlag(MODULE_ID, QUEUED_CHOICES_FLAG);
   let queue = cloneQueueState(raw);
