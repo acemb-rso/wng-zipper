@@ -1,8 +1,0 @@
-{
-  "dependencies": {
-    "sass": "^1.62.1"
-  },
-  "scripts": {
-    "translate": "node translate-all.js"
-  }
-}
