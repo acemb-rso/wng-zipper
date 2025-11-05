@@ -3,7 +3,7 @@
 > Alternate-activation initiative for Wrath & Glory combats inside Foundry VTT.
 
 ## At a Glance
-- **Current release:** 0.12.5a
+- **Current release:** 1.0.0
 - **Foundry VTT:** v11 – v13 (verified on v13)
 - **Wrath & Glory system:** v6+
 
@@ -100,6 +100,6 @@ examples of the available methods.
 - Changelog: `CHANGELOG.md`
 - License: [MIT](LICENSE)
 
-Created by **Ariel Cember** with collaboration from GPT-5. Inspired by
+Created by **Goldwalker** with collaboration from GPT-5. Inspired by
 [Caewok’s Zipper Initiative](https://github.com/caewok/fvtt-zipper-initiative)
 and [Death-Save’s Combat Carousel](https://github.com/death-save/combat-carousel).
