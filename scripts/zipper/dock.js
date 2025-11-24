@@ -287,6 +287,8 @@ export function describeDockAction(action) {
       return "queue clear";
     case "end-turn":
       return "end turn request";
+    case "ping;
+        return "token ping";
     case "reset-round":
       return "round reset";
     case "advance-round":
@@ -326,6 +328,9 @@ export function bindDockListeners(wrapper) {
           break;
         case "end-turn":
           await handleEndTurn(combat, target.dataset.combatantId);
+          break;
+        case "ping":
+          await handlePingCombatant(combat, target.dataset.combatantId);
           break;
         case "reset-round":
           await handleResetRound(combat);
@@ -635,6 +640,45 @@ export async function handleToggleZipper(combat) {
   }
   ui.combat.render(true);
   requestDockRender();
+}
+export async function handlePingCombatant(combat, combatantId) {
+  if (!combatantId) return;
+
+  const combatant = combat.combatants?.get?.(combatantId) ?? null;
+  if (!combatant) {
+    ui.notifications.warn("Unable to find that combatant.");
+    return;
+  }
+
+  if (!game.user.isGM && !combatant.isOwner) {
+    ui.notifications.warn("You cannot ping that combatant.");
+    return;
+  }
+
+  const tokenDocument = combatant.token ?? combat.scene?.tokens?.get?.(combatant.tokenId) ?? null;
+  const tokenObject = tokenDocument?.object ?? canvas?.tokens?.get?.(combatant.tokenId) ?? null;
+  const center = tokenObject?.center ?? tokenDocument?.center ?? null;
+
+  if (!tokenObject || !center) {
+    ui.notifications.warn("That combatant does not have a token on the active scene.");
+    return;
+  }
+
+  try {
+    if (typeof tokenObject.drawAttention === "function") {
+      await tokenObject.drawAttention({ duration: 1250 });
+      return;
+    }
+    if (typeof canvas?.ping === "function") {
+      await canvas.ping(center, { duration: 1250 });
+      return;
+    }
+    if (typeof game.user?.broadcastActivity === "function") {
+      game.user.broadcastActivity({ type: "ping", sceneId: tokenObject.document?.scene?.id ?? canvas?.scene?.id ?? null, data: center });
+    }
+  } catch (err) {
+    log(err);
+  }
 }
 
 export async function handleManualActivation(combat, combatantId) {
