@@ -287,7 +287,7 @@ export function describeDockAction(action) {
       return "queue clear";
     case "end-turn":
       return "end turn request";
-    case "ping;
+    case "ping":
         return "token ping";
     case "reset-round":
       return "round reset";
