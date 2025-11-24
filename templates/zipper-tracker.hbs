@@ -205,6 +205,29 @@
     .wng-zipper-tracker .combatant-card .portrait[data-action] {
       cursor: pointer;
     }
+    .wng-zipper-tracker .ping-button {
+      position: absolute;
+      inset: 4px auto auto 4px;
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.26);
+      background: rgba(0, 0, 0, 0.65);
+      color: #ffe7bb;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 150ms ease, transform 150ms ease;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+    }
+    .wng-zipper-tracker .ping-button:hover {
+      background: rgba(255, 255, 255, 0.15);
+      transform: translateY(-1px);
+    }
     .wng-zipper-tracker .portrait-hint {
       position: absolute;
       inset: auto 6px 6px;
@@ -444,6 +467,12 @@
       align-items: center;
       gap: 6px;
     }
+    .wng-zipper-tracker .combatant-info .token-thumb {
+      position: relative;
+      width: 26px;
+      height: 26px;
+      flex: 0 0 auto;
+    }
     .wng-zipper-tracker .combatant-info img {
       width: 26px;
       height: 26px;
@@ -565,6 +594,7 @@
             {{#if currentCombatant}}
               <div class="portrait" {{#if currentCombatant.canEndTurn}}data-action="end-turn" data-combatant-id="{{currentCombatant.id}}"{{/if}}>
                 <img src="{{currentCombatant.img}}" alt="{{currentCombatant.name}}">
+                <button class="ping-button" data-action="ping" data-combatant-id="{{currentCombatant.id}}" title="Ping {{currentCombatant.name}}">Ping</button>
                 {{#if currentCombatant.canEndTurn}}<span class="portrait-hint">End Turn</span>{{/if}}
               </div>
               <div class="details">
@@ -587,6 +617,7 @@
             {{#if topNextCandidate}}
               <div class="portrait" {{#if topNextCandidate.canActivate}}data-action="activate" data-combatant-id="{{topNextCandidate.id}}" data-side="{{topNextCandidate.side}}"{{/if}}>
                 <img src="{{topNextCandidate.img}}" alt="{{topNextCandidate.name}}">
+                <button class="ping-button" data-action="ping" data-combatant-id="{{topNextCandidate.id}}" title="Ping {{topNextCandidate.name}}">Ping</button>
                 {{#if topNextCandidate.canActivate}}<span class="portrait-hint">Activate</span>{{/if}}
               </div>
               <div class="details">
@@ -651,7 +682,9 @@
               {{#each ready.pc}}
                 <li>
                   <div class="combatant-info">
-                    <img src="{{img}}" alt="{{name}}">
+                      <div class="token-thumb">
+                      <img src="{{img}}" alt="{{name}}">
+                      <button class="ping-button" data-action="ping" data-combatant-id="{{id}}" title="Ping {{name}}">Ping</button>
                     <div>
                       <div class="name">{{name}}</div>
                       <div class="tags">
@@ -680,7 +713,9 @@
               {{#each ready.npc}}
                 <li>
                   <div class="combatant-info">
-                    <img src="{{img}}" alt="{{name}}">
+                      <div class="token-thumb">
+                      <img src="{{img}}" alt="{{name}}">
+                      <button class="ping-button" data-action="ping" data-combatant-id="{{id}}" title="Ping {{name}}">Ping</button>
                     <div>
                       <div class="name">{{name}}</div>
                       <div class="tags">
@@ -709,7 +744,9 @@
               {{#each spent.pc}}
                 <li>
                   <div class="combatant-info">
-                    <img src="{{img}}" alt="{{name}}">
+                       <div class="token-thumb">
+                      <img src="{{img}}" alt="{{name}}">
+                      <button class="ping-button" data-action="ping" data-combatant-id="{{id}}" title="Ping {{name}}">Ping</button>
                     <div>
                       <div class="name">{{name}}</div>
                       <div class="tags">
@@ -723,7 +760,9 @@
               {{#each spent.npc}}
                 <li>
                   <div class="combatant-info">
-                    <img src="{{img}}" alt="{{name}}">
+                      <div class="token-thumb">
+                      <img src="{{img}}" alt="{{name}}">
+                      <button class="ping-button" data-action="ping" data-combatant-id="{{id}}" title="Ping {{name}}">Ping</button>
                     <div>
                       <div class="name">{{name}}</div>
                       <div class="tags">
@@ -746,12 +785,15 @@
               <h4>Defeated PCs</h4>
               <ul>
                 {{#each defeated.pc}}
-                  <li>
-                    <div class="combatant-info">
+                <li>
+                  <div class="combatant-info">
+                    <div class="token-thumb">
                       <img src="{{img}}" alt="{{name}}">
+                       <button class="ping-button" data-action="ping" data-combatant-id="{{id}}" title="Ping {{name}}">Ping</button>
+                    </div>
                       <div>
-                        <div class="name">{{name}}</div>
-                        <div class="tags">
+                      <div class="name">{{name}}</div>
+                      <div class="tags">
                           <span class="tag">Defeated</span>
                           {{#if hidden}}<span class="tag">Hidden</span>{{/if}}
                         </div>
@@ -767,12 +809,15 @@
               <h4>Defeated NPCs</h4>
               <ul>
                 {{#each defeated.npc}}
-                  <li>
-                    <div class="combatant-info">
+                <li>
+                  <div class="combatant-info">
+                    <div class="token-thumb">
                       <img src="{{img}}" alt="{{name}}">
+                      <button class="ping-button" data-action="ping" data-combatant-id="{{id}}" title="Ping {{name}}">Ping</button>
+                    </div>
                       <div>
-                        <div class="name">{{name}}</div>
-                        <div class="tags">
+                      <div class="name">{{name}}</div>
+                      <div class="tags">
                           <span class="tag">Defeated</span>
                           {{#if hidden}}<span class="tag">Hidden</span>{{/if}}
                         </div>
