@@ -400,6 +400,9 @@
     .wng-zipper-tracker .candidate-portrait[data-action] {
       cursor: pointer;
     }
+    .wng-zipper-tracker .token-thumb[data-action] {
+      cursor: pointer;
+    }
     .wng-zipper-tracker .candidate-details {
       flex: 1 1 auto;
       display: flex;
@@ -592,7 +595,7 @@
         <section class="activation-lane">
           <div class="combatant-card current {{#if currentCombatant.isOwner}}is-owned{{/if}} {{#unless currentCombatant}}is-empty{{/unless}}">
             {{#if currentCombatant}}
-              <div class="portrait" {{#if currentCombatant.canEndTurn}}data-action="end-turn" data-combatant-id="{{currentCombatant.id}}"{{/if}}>
+              <div class="portrait" {{#if currentCombatant.canEndTurn}}role="button" tabindex="0" aria-label="End turn for {{currentCombatant.name}}" data-action="end-turn" data-combatant-id="{{currentCombatant.id}}"{{/if}}>
                 <img src="{{currentCombatant.img}}" alt="{{currentCombatant.name}}">
                 <button class="ping-button" data-action="ping" data-combatant-id="{{currentCombatant.id}}" title="Ping {{currentCombatant.name}}">Ping</button>
                 {{#if currentCombatant.canEndTurn}}<span class="portrait-hint">End Turn</span>{{/if}}
@@ -615,7 +618,7 @@
           <div class="lane-arrow"><span>&rsaquo;</span></div>
           <div class="combatant-card upcoming {{#if topNextCandidate.isOwner}}is-owned{{/if}} {{#unless topNextCandidate}}is-empty{{/unless}}">
             {{#if topNextCandidate}}
-              <div class="portrait" {{#if topNextCandidate.canActivate}}data-action="activate" data-combatant-id="{{topNextCandidate.id}}" data-side="{{topNextCandidate.side}}"{{/if}}>
+              <div class="portrait" {{#if topNextCandidate.canActivate}}role="button" tabindex="0" aria-label="Activate {{topNextCandidate.name}}" data-action="activate" data-combatant-id="{{topNextCandidate.id}}" data-side="{{topNextCandidate.side}}"{{/if}}>
                 <img src="{{topNextCandidate.img}}" alt="{{topNextCandidate.name}}">
                 <button class="ping-button" data-action="ping" data-combatant-id="{{topNextCandidate.id}}" title="Ping {{topNextCandidate.name}}">Ping</button>
                 {{#if topNextCandidate.canActivate}}<span class="portrait-hint">Activate</span>{{/if}}
@@ -649,7 +652,7 @@
             <ul class="candidate-list">
               {{#each nextCandidates}}
                 <li class="candidate-row{{#if isOwner}} is-owned{{/if}}{{#if manualSelected}} is-selected{{/if}}">
-                  <div class="candidate-portrait" {{#if canActivate}}data-action="activate" data-combatant-id="{{id}}" data-side="{{side}}"{{/if}}>
+                  <div class="candidate-portrait" {{#if canActivate}}role="button" tabindex="0" aria-label="Activate {{name}}" data-action="activate" data-combatant-id="{{id}}" data-side="{{side}}"{{/if}}>
                     <img src="{{img}}" alt="{{name}}">
                   </div>
                   <div class="candidate-details">
@@ -682,9 +685,9 @@
               {{#each ready.pc}}
                 <li>
                   <div class="combatant-info">
-                      <div class="token-thumb">
+                    <div class="token-thumb" role="button" tabindex="0" aria-label="Ping {{name}}" data-action="ping" data-combatant-id="{{id}}" title="Ping {{name}}">
                       <img src="{{img}}" alt="{{name}}">
-                      <button class="ping-button" data-action="ping" data-combatant-id="{{id}}" title="Ping {{name}}">Ping</button>
+                    </div>
                     <div>
                       <div class="name">{{name}}</div>
                       <div class="tags">
@@ -713,9 +716,9 @@
               {{#each ready.npc}}
                 <li>
                   <div class="combatant-info">
-                      <div class="token-thumb">
+                    <div class="token-thumb" role="button" tabindex="0" aria-label="Ping {{name}}" data-action="ping" data-combatant-id="{{id}}" title="Ping {{name}}">
                       <img src="{{img}}" alt="{{name}}">
-                      <button class="ping-button" data-action="ping" data-combatant-id="{{id}}" title="Ping {{name}}">Ping</button>
+                    </div>
                     <div>
                       <div class="name">{{name}}</div>
                       <div class="tags">

@@ -345,6 +345,15 @@ export function bindDockListeners(wrapper) {
       reportDockActionFailure(err, { action: describeDockAction(action) });
     }
   });
+
+  wrapper.off("keydown.wng-zipper");
+  wrapper.on("keydown.wng-zipper", "[data-action]", (event) => {
+    const isClickKey = event.key === "Enter" || event.key === " ";
+    if (!isClickKey) return;
+
+    event.preventDefault();
+    event.currentTarget.click();
+  });
 }
 
 function getViewportBounds() {
