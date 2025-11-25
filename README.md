@@ -100,6 +100,12 @@ examples of the available methods.
 - Changelog: `CHANGELOG.md`
 - License: [MIT](LICENSE)
 
+## Developing & PRs
+- The Codex workspace now includes an `origin` remote set to
+  `https://github.com/acemb-rso/wng-zipper.git`, which the Create PR helper requires. If you
+  clone the repository elsewhere and the remote is missing, add it with
+  `git remote add origin https://github.com/acemb-rso/wng-zipper.git` before invoking the tool.
+
 Created by **Goldwalker** with collaboration from GPT-5. Inspired by
 [Caewok’s Zipper Initiative](https://github.com/caewok/fvtt-zipper-initiative)
 and [Death-Save’s Combat Carousel](https://github.com/death-save/combat-carousel).
